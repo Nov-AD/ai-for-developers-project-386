@@ -1,0 +1,22 @@
+{
+  "name": "ai-for-developers-project-386",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "contract:build": "pnpm --filter @calendar/contract build",
+    "sdk:build": "pnpm --filter @calendar/sdk generate",
+    "api:types": "pnpm --filter @calendar/api types",
+    "codegen": "pnpm contract:build && pnpm sdk:build && pnpm api:types",
+    "build": "pnpm codegen && pnpm -r build",
+    "dev": "pnpm codegen && pnpm -r --parallel dev",
+    "test": "pnpm -r test",
+    "test:smoke": "pnpm --filter @calendar/api test:smoke",
+    "typecheck": "pnpm --filter @calendar/sdk build && pnpm -r typecheck",
+    "lint": "pnpm -r lint"
+  }
+}

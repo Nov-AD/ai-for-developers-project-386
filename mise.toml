@@ -1,0 +1,101 @@
+# Development environment for the call calendar.
+# Every tool used by install, run, build and check tasks is pinned here.
+# `mise install --locked` installs exactly the versions recorded in mise.lock.
+
+[settings]
+experimental = true
+lockfile = true
+
+[tools]
+node = "24.11.1"
+pnpm = "12.21.0"
+hk = "2.12.0"
+pitchfork = "2.34.0"
+
+[env]
+NODE_ENV = "development"
+# Expose workspace-installed executables to Git hooks and ad-hoc commands.
+_.path = ["node_modules/.bin"]
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+
+[tasks.install]
+description = "Install JavaScript dependencies from the lockfile"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.setup]
+description = "Install dependencies and repository Git hooks"
+depends = ["install"]
+run = "hk install --mise"
+
+[tasks.codegen]
+description = "Generate OpenAPI, SDK and server types from the TypeSpec contract"
+run = "pnpm codegen"
+
+[tasks.build]
+description = "Generate artifacts and build every package"
+run = "pnpm build"
+
+[tasks.lint]
+description = "Lint every package"
+run = "pnpm lint"
+
+[tasks.typecheck]
+description = "Type-check every package"
+run = "pnpm typecheck"
+
+[tasks.test]
+description = "Run every test suite"
+run = "pnpm test"
+
+[tasks.smoke]
+description = "Run the API smoke test"
+run = "pnpm test:smoke"
+
+# The single entry point for local checks, Git hooks and CI.
+# `install` runs first, then the checks run in order.
+[tasks.check]
+description = "Install dependencies and run lint, type checks and tests"
+depends = ["install"]
+run = [
+  { task = "lint" },
+  { task = "typecheck" },
+  { task = "test" },
+]
+
+# ---------------------------------------------------------------------------
+# Hooks
+# ---------------------------------------------------------------------------
+
+[hooks]
+# After `mise install`, make sure JavaScript dependencies are present.
+postinstall = { task = "install" }
+# When an activated shell enters the project, refresh dependencies and hooks.
+enter = { task = "setup" }
+
+# ---------------------------------------------------------------------------
+# Development services
+# ---------------------------------------------------------------------------
+
+[daemons.api]
+run = "exec pnpm --filter @calendar/api dev"
+port = 3000
+ready_port = 3000
+
+[daemons.web]
+# The web app imports the generated SDK from packages/sdk/dist.
+init = ["pnpm --filter @calendar/sdk build"]
+run = "exec pnpm --filter @calendar/web dev"
+port = 5173
+ready_port = 5173
+depends = ["api"]
+
+[daemon_groups]
+default = ["api", "web"]
+
+[tasks.dev]
+description = "Start the API and web daemons and show their status"
+daemons = ["api", "web"]
+run = "mise daemons status"

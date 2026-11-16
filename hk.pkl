@@ -1,0 +1,23 @@
+/// Git hooks for the call calendar.
+/// The hooks call the same `mise run check` task that CI runs.
+amends "package://github.com/jdx/hk/releases/download/v2.12.0/hk@2.12.0#/Config.pkl"
+
+local checkSteps = new Mapping<String, Step> {
+  ["checks"] {
+    check = "mise run check"
+  }
+}
+
+steps = checkSteps
+
+hooks {
+  ["pre-commit"] {
+    fix = false
+    stage = false
+    stash = "none"
+    steps = checkSteps
+  }
+  ["pre-push"] {
+    steps = checkSteps
+  }
+}

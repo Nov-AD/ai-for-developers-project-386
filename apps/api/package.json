@@ -1,0 +1,41 @@
+{
+  "name": "@calendar/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Call scheduling API",
+  "main": "dist/app.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "types": "openapi-typescript ../../packages/contract/tsp-output/openapi3/openapi.yaml -o src/generated/openapi.d.ts",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "start": "fastify start -l info dist/app.js",
+    "dev": "fastify start -w -l info src/app.ts",
+    "lint": "oxlint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:smoke": "vitest run test/smoke.test.ts",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/autoload": "^6.0.0",
+    "@fastify/cors": "^11.4.3",
+    "@fastify/sensible": "^6.0.0",
+    "fastify": "^5.12.8",
+    "fastify-cli": "^8.0.3",
+    "fastify-plugin": "^6.0.0",
+    "fastify-type-provider-zod": "^7.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "ajv": "^8.20.0",
+    "fastify-tsconfig": "^3.0.0",
+    "openapi-typescript": "^7.13.0",
+    "oxlint": "^1.93.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~6.0.2",
+    "vitest": "^5.1.0",
+    "yaml": "^2.9.1"
+  }
+}

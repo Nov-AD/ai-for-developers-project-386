@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+.mise/
+mise.local.toml
+mise.local.lock
+hk.local.pkl

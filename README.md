@@ -2,6 +2,7 @@
 
 
 [![hexlet-check](https://github.com/Nov-AD/ai-for-developers-project-386/actions/workflows/hexlet-check.yml/badge.svg)](https://github.com/Nov-AD/ai-for-developers-project-386/actions)
+[![CI](https://github.com/Nov-AD/ai-for-developers-project-386/actions/workflows/ci.yml/badge.svg)](https://github.com/Nov-AD/ai-for-developers-project-386/actions/workflows/ci.yml)
 
 «Запись на звонок» — упрощённый сервис бронирования времени по мотивам [Cal.com](https://cal.com). Владелец календаря публикует доступное время для встреч, а гость выбирает свободный слот и записывается на звонок. Это небольшое, но законченное приложение: весь путь от проектирования и API-контракта до запуска в облаке.
 
@@ -54,6 +55,7 @@
 Проект — TypeScript-монорепозиторий на pnpm, где TypeSpec-контракт является единственным источником правды.
 
 - **Платформа:** TypeScript, Node.js 24 LTS, pnpm workspaces
+- **Окружение:** mise (`mise.toml`, `mise.lock`) — зафиксированные версии инструментов, задачи и фоновые процессы
 - **Контракт:** TypeSpec 1.x (`@typespec/http`, `@typespec/openapi3`) → OpenAPI 3.1
 - **Клиентский SDK:** `@hey-api/openapi-ts` — SDK, типы, Zod-схемы и готовые TanStack Query-хуки
 - **Бекенд:** Fastify 5 + Zod 4 (`fastify-type-provider-zod`), серверные типы из OpenAPI через `openapi-typescript`
@@ -75,22 +77,67 @@ apps/web/            # React SPA
 ### Генерация
 
 ```bash
+mise run codegen      # весь конвейер: TypeSpec → OpenAPI → SDK → серверные типы
+mise run build        # codegen + сборка всех пакетов
+```
+
+Отдельные шаги доступны и через pnpm:
+
+```bash
 pnpm contract:build   # TypeSpec → OpenAPI
 pnpm sdk:build        # OpenAPI → SDK, типы, Zod-схемы, query-хуки
+pnpm api:types        # OpenAPI → серверные типы
 ```
+
+Цепочка и выбор генераторов проверены: [docs/toolchain-verification.md](docs/toolchain-verification.md). Соответствие сервера контракту проверяется тестом `apps/api/test/contract.test.ts`.
+
+### Проверки
+
+Все проверки запускаются одной командой — локально, в Git-хуках и в CI:
+
+```bash
+mise run check
+```
+
+Задача ставит зависимости из lock-файла (`pnpm install --frozen-lockfile`), затем последовательно запускает:
+
+- `mise run lint` — oxlint во всех пакетах;
+- `mise run typecheck` — TypeScript и TypeSpec (компиляция с `--warn-as-error`);
+- `mise run test` — Vitest: контрактные тесты и дымовой тест API.
+
+Workflow `.github/workflows/ci.yml` вызывает ту же команду `mise run check` через `jdx/mise-action` и `mise install --locked`, поэтому локальный и CI-результат совпадают. Хуки `pre-commit` и `pre-push`, установленные через `hk`, запускают эту же задачу.
+
+Дымовой тест `apps/api/test/smoke.test.ts` поднимает приложение на случайном порту и проверяет, что `GET /health` отвечает `200 { "status": "ok" }`.
 
 ## Установка
 
-<!-- Опишите установку: клонирование, зависимости, переменные окружения -->
+Понадобятся только [mise](https://mise.jdx.dev/) и Git. Версии Node.js, pnpm, hk и pitchfork зафиксированы в `mise.toml`, а контрольные суммы загрузок — в `mise.lock`.
 
 ```bash
 git clone https://github.com/Nov-AD/ai-for-developers-project-386.git
 cd ai-for-developers-project-386
+
+mise install        # Node.js, pnpm, hk и pitchfork нужных версий
+mise run setup      # зависимости из lock-файла + Git-хуки hk
 ```
+
+`mise install` автоматически выполняет задачу `install` (`pnpm install --frozen-lockfile`). `mise run setup` дополнительно устанавливает хуки `pre-commit` и `pre-push`; задачу можно запускать повторно. Если включена активация mise в шелле, `setup` выполняется при входе в каталог проекта. При первом запуске mise может попросить подтвердить конфигурацию проекта — выполните `mise trust`.
 
 ## Использование
 
-<!-- Добавьте примеры запуска и запись asciinema — именно это смотрит работодатель -->
+```bash
+mise run dev            # запустить API и web, дождаться готовности и показать статус
+mise daemons status     # состояние фоновых процессов
+mise daemons logs api   # логи API; для фронтенда — logs web
+mise daemons stop       # остановить оба процесса
+```
+
+`mise run dev` поднимает фоновые процессы через [pitchfork](https://pitchfork.jdx.dev/):
+
+- **API** — Fastify на http://127.0.0.1:3000;
+- **web** — Vite на http://127.0.0.1:5173. Перед стартом собирается `@calendar/sdk`, а Vite ждёт готовности API.
+
+Процессы продолжают работать после выхода из задачи, поэтому их можно останавливать и запускать повторно. Порт 5173 зафиксирован: если он занят, Vite завершится с ошибкой, а не переедет на другой порт.
 
 ---
 

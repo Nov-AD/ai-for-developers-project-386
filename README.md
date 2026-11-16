@@ -51,7 +51,33 @@
 
 ## Стек
 
-- Разное
+Проект — TypeScript-монорепозиторий на pnpm, где TypeSpec-контракт является единственным источником правды.
+
+- **Платформа:** TypeScript, Node.js 24 LTS, pnpm workspaces
+- **Контракт:** TypeSpec 1.x (`@typespec/http`, `@typespec/openapi3`) → OpenAPI 3.1
+- **Клиентский SDK:** `@hey-api/openapi-ts` — SDK, типы, Zod-схемы и готовые TanStack Query-хуки
+- **Бекенд:** Fastify 5 + Zod 4 (`fastify-type-provider-zod`), серверные типы из OpenAPI через `openapi-typescript`
+- **Фронтенд:** React 19, Vite 8, TanStack Query 5, Tailwind CSS + shadcn/ui
+- **Даты и время:** `date-fns` + `date-fns-tz` — хранение в UTC, границы дней считаются в таймзоне владельца
+- **Хранение:** `Map` в памяти процесса за интерфейсом репозитория (см. [«Хранение данных»](#хранение-данных))
+- **Тесты:** Vitest, `fastify.inject`; опционально Playwright для e2e
+- **Деплой:** Docker, один инстанс — Render / Fly.io / Railway
+
+### Структура репозитория
+
+```text
+packages/contract/   # TypeSpec-контракт и сгенерированный OpenAPI
+packages/sdk/        # сгенерированный клиентский SDK
+apps/api/            # Fastify-сервер
+apps/web/            # React SPA
+```
+
+### Генерация
+
+```bash
+pnpm contract:build   # TypeSpec → OpenAPI
+pnpm sdk:build        # OpenAPI → SDK, типы, Zod-схемы, query-хуки
+```
 
 ## Установка
 

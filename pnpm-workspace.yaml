@@ -1,6 +1,9 @@
 packages:
   - apps/*
   - packages/*
+# @hey-api/json-schema-ref-parser pins js-yaml 4.2.0, which has high-severity advisories.
+overrides:
+  js-yaml: 4.3.2
 minimumReleaseAgeExclude:
   - '@oxfmt/binding-android-arm-eabi@0.79.0'
   - '@oxfmt/binding-android-arm64@0.79.0'

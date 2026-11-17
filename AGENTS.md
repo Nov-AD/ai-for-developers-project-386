@@ -11,3 +11,17 @@
 - Границы: `apps/*` не импортируют друг друга, `packages/*` не импортируют `apps/*`.
 - Новые коммиты — Conventional Commits.
 - `.github/workflows/hexlet-check.yml` сгенерирован Хекслетом: не редактируй.
+
+## Agent skills
+
+### Issue tracker
+
+Задачи и спеки этого репозитория живут в GitHub Issues, работа через `gh` CLI. См. `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Канонические роли triage используют одноимённые лейблы: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. См. `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` и `docs/adr/` в корне репозитория. См. `docs/agents/domain.md`.

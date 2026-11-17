@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+mise.lock
+apps/api/src/generated
+packages/contract/tsp-output
+packages/sdk/src/**/*.gen.ts
+packages/sdk/src/client
+packages/sdk/src/core
+packages/sdk/src/index.ts

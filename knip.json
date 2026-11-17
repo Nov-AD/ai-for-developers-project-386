@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": [],
+      "ignoreDependencies": ["@commitlint/cli"]
+    },
+    "apps/api": {
+      "entry": ["src/plugins/*.ts", "src/routes/*.ts", "test/**/*.test.ts"],
+      "ignoreDependencies": ["ts-node"]
+    },
+    "apps/web": {},
+    "packages/sdk": {
+      "ignore": ["src/**/*.gen.ts", "src/client/**", "src/core/**"]
+    },
+    "packages/contract": {
+      "entry": [],
+      "ignoreDependencies": ["@typespec/http", "@typespec/openapi3"]
+    }
+  },
+  "ignoreDependencies": ["@hey-api/client-fetch"],
+  "ignoreBinaries": ["jactionlint", "betterleaks", "osv-scanner", "oasdiff", "vacuum"]
+}

@@ -11,6 +11,12 @@ node = "24.11.1"
 pnpm = "12.21.0"
 hk = "2.12.0"
 pitchfork = "2.34.0"
+# Quality gates that are distributed as standalone binaries.
+jactionlint = "2.6.0"
+betterleaks = "1.10.1"
+osv-scanner = "2.7.1"
+vacuum = "0.41.0"
+"github:oasdiff/oasdiff" = "1.38.0"
 
 [env]
 NODE_ENV = "development"
@@ -39,8 +45,36 @@ description = "Generate artifacts and build every package"
 run = "pnpm build"
 
 [tasks.lint]
-description = "Lint every package"
-run = "pnpm lint"
+description = "Lint TypeScript and GitHub Actions workflows"
+run = "pnpm lint && pnpm lint:actions"
+
+[tasks.fmt]
+description = "Format code with oxfmt"
+run = "pnpm fmt"
+
+[tasks."fmt:check"]
+description = "Check formatting with oxfmt"
+run = "pnpm fmt:check"
+
+[tasks.knip]
+description = "Find unused files, exports and dependencies"
+run = "pnpm knip"
+
+[tasks.syncpack]
+description = "Check dependency versions across the monorepo"
+run = "pnpm syncpack"
+
+[tasks.arch]
+description = "Check package boundaries and import cycles"
+run = "pnpm arch"
+
+[tasks."contract:lint"]
+description = "Lint the generated OpenAPI specification"
+run = "pnpm contract:lint"
+
+[tasks."contract:breaking"]
+description = "Fail on breaking OpenAPI changes against the base branch"
+run = "pnpm contract:breaking"
 
 [tasks.typecheck]
 description = "Type-check every package"
@@ -54,16 +88,24 @@ run = "pnpm test"
 description = "Run the API smoke test"
 run = "pnpm test:smoke"
 
+[tasks.secrets]
+description = "Scan the Git history for committed secrets"
+run = "pnpm secrets"
+
+[tasks.audit]
+description = "Scan dependencies for known vulnerabilities"
+run = "pnpm audit"
+
 # The single entry point for local checks, Git hooks and CI.
-# `install` runs first, then the checks run in order.
+# It installs dependencies, then runs every hermetic check in order.
 [tasks.check]
-description = "Install dependencies and run lint, type checks and tests"
+description = "Install dependencies and run every check"
 depends = ["install"]
-run = [
-  { task = "lint" },
-  { task = "typecheck" },
-  { task = "test" },
-]
+run = "pnpm check"
+
+[tasks.fix]
+description = "Apply safe automatic fixes"
+run = "pnpm fix"
 
 # ---------------------------------------------------------------------------
 # Hooks

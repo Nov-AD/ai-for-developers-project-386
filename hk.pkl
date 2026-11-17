@@ -1,23 +1,66 @@
 /// Git hooks for the call calendar.
-/// The hooks call the same `mise run check` task that CI runs.
+/// Staged files get fast checks in the commit hook; the whole project is
+/// checked before push and in CI. CI runs the same `mise run check` command.
 amends "package://github.com/jdx/hk/releases/download/v2.12.0/hk@2.12.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.12.0/hk@2.12.0#/Builtins.pkl"
 
-local checkSteps = new Mapping<String, Step> {
-  ["checks"] {
-    check = "mise run check"
+local generated = List(
+  "**/dist/**",
+  "apps/api/src/generated/**",
+  "packages/contract/tsp-output/**",
+  "packages/sdk/src/**/*.gen.ts",
+  "packages/sdk/src/client/**",
+  "packages/sdk/src/core/**",
+  "packages/sdk/src/index.ts"
+)
+
+local fastSteps = new Mapping<String, Step> {
+  ["oxfmt"] = (Builtins.oxfmt) {
+    glob = List(
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.json",
+      "**/*.css"
+    )
+    exclude = generated
   }
+  ["oxlint"] = (Builtins.ox_lint) {
+    glob = List("**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs", "**/*.cjs")
+    exclude = generated
+  }
+  ["secrets"] {
+    check = "betterleaks git --staged --redact --no-banner"
+  }
+  ["trailing-whitespace"] = Builtins.trailing_whitespace
+  ["newlines"] = Builtins.newlines
+  ["merge-conflict"] = Builtins.check_merge_conflict
+  ["large-files"] = Builtins.check_added_large_files
 }
 
-steps = checkSteps
+steps = fastSteps
 
 hooks {
   ["pre-commit"] {
     fix = false
     stage = false
     stash = "none"
-    steps = checkSteps
+    steps = fastSteps
   }
   ["pre-push"] {
-    steps = checkSteps
+    steps {
+      ["check"] {
+        check = "mise run check"
+      }
+    }
+  }
+  ["commit-msg"] {
+    steps {
+      ["commitlint"] {
+        check = "commitlint --edit {{commit_msg_file}}"
+      }
+    }
   }
 }

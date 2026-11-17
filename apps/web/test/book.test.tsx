@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Book } from '@/routes/Book'
 import type { MeetingType } from '@calendar/sdk'
-import { meetingTypesResponse } from './helpers/contract'
+import { availabilityResponse, meetingTypesResponse } from './helpers/contract'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -120,5 +120,143 @@ describe('Book', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось загрузить типы встреч.')
     expect(screen.getByRole('button', { name: 'Повторить загрузку' })).toBeEnabled()
     expect(screen.queryByText('Типов встреч пока нет. Загляните позже.')).not.toBeInTheDocument()
+  })
+})
+
+describe('Book availability', () => {
+  const intro: MeetingType = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Introduction',
+    description: 'First conversation',
+    durationMinutes: 45
+  }
+  const review: MeetingType = {
+    id: '33333333-3333-4333-8333-333333333333',
+    name: 'Review',
+    description: 'Discuss a project',
+    durationMinutes: 30
+  }
+  const window = {
+    ownerTimeZone: 'Europe/Moscow',
+    windowStartDate: '2026-11-18',
+    windowEndDate: '2026-11-21'
+  }
+  const twoDays = {
+    ...window,
+    slots: [
+      { start: '2026-11-18T06:00:00Z', end: '2026-11-18T06:45:00Z' },
+      { start: '2026-11-18T06:30:00Z', end: '2026-11-18T07:15:00Z' },
+      { start: '2026-11-19T06:00:00Z', end: '2026-11-19T06:45:00Z' }
+    ]
+  }
+
+  function mockApi(availability: (url: URL) => Response) {
+    const fetch = vi.fn(async (input: Request) => {
+      const url = new URL(input.url)
+      if (url.pathname === '/meeting-types')
+        return meetingTypesResponse('populated', [intro, review])
+      if (url.pathname === '/availability') return availability(url)
+      throw new Error(`Unexpected request ${url.pathname}`)
+    })
+    vi.stubGlobal('fetch', fetch)
+    return fetch
+  }
+
+  it('loads availability for the selected type, shows days without slots and keeps the chosen slot', async () => {
+    const fetch = mockApi(() => availabilityResponse('available', twoDays))
+    renderBook()
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Introduction' }))
+
+    const day18 = await screen.findByRole('button', { name: /18 ноября/ })
+    expect(day18).toHaveTextContent('2 слотов')
+    // 2026-11-20 is a Friday with no slots in the response.
+    const emptyDay = screen.getByRole('button', { name: /20 ноября/ })
+    expect(emptyDay).toBeDisabled()
+    expect(emptyDay).toHaveTextContent('нет слотов')
+
+    fireEvent.click(day18)
+    const slot = screen.getByRole('radio', { name: /09:00/ })
+    fireEvent.click(slot)
+    expect(slot).toBeChecked()
+
+    const availabilityCalls = fetch.mock.calls.filter(
+      ([request]) => new URL(request.url).pathname === '/availability'
+    )
+    expect(availabilityCalls).toHaveLength(1)
+    expect(new URL(availabilityCalls[0]![0].url).searchParams.get('meetingTypeId')).toBe(intro.id)
+  })
+
+  it('resets the day and slot and reloads availability when the guest changes the type', async () => {
+    const fetch = mockApi((url) =>
+      availabilityResponse(
+        'available',
+        url.searchParams.get('meetingTypeId') === intro.id
+          ? twoDays
+          : { ...window, slots: [{ start: '2026-11-19T06:00:00Z', end: '2026-11-19T06:30:00Z' }] }
+      )
+    )
+    renderBook()
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Introduction' }))
+    fireEvent.click(await screen.findByRole('button', { name: /18 ноября/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /09:00/ }))
+    expect(screen.getByRole('radio', { name: /09:00/ })).toBeChecked()
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Review' }))
+
+    expect(await screen.findByRole('button', { name: /19 ноября/ })).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /09:00/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/Выберите день, чтобы увидеть свободное время/)).toBeInTheDocument()
+    const calls = fetch.mock.calls
+      .filter(([request]) => new URL(request.url).pathname === '/availability')
+      .map(([request]) => new URL(request.url).searchParams.get('meetingTypeId'))
+    expect(calls).toEqual([intro.id, review.id])
+  })
+
+  it('shows a clear no-slots state instead of day buttons when nothing is available', async () => {
+    mockApi(() => availabilityResponse('empty'))
+    renderBook()
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Introduction' }))
+
+    expect(await screen.findByText(/На ближайшие дни свободных слотов нет/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /ноября/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows an availability error separately and refetches on retry', async () => {
+    let attempt = 0
+    mockApi(() => {
+      attempt += 1
+      return attempt === 1
+        ? availabilityResponse('unknown-type')
+        : availabilityResponse('available', twoDays)
+    })
+    renderBook()
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Introduction' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Не удалось загрузить свободное время.'
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить загрузку' }))
+    expect(await screen.findByText(/Время показано в вашем часовом поясе/)).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows slot times in the guest time zone with an explicit zone label', async () => {
+    vi.stubEnv('TZ', 'America/New_York')
+    mockApi(() => availabilityResponse('available', twoDays))
+    renderBook()
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Introduction' }))
+    fireEvent.click(await screen.findByRole('button', { name: /18 ноября/ }))
+
+    const slot = await screen.findByRole('radio', { name: /01:00/ })
+    const label = slot.closest('label')
+    expect(label).toHaveTextContent('18 нояб. 2026 г., 01:00')
+    expect(label?.textContent).toMatch(/GMT-5|EST|UTC−5/)
+    expect(screen.getByText(/America\/New_York/)).toBeInTheDocument()
   })
 })

@@ -55,3 +55,20 @@ export async function assertMeetingTypeRequest(request: Request): Promise<unknow
   expect(validate(body), ajv.errorsText(validate.errors ?? undefined)).toBe(true)
   return body
 }
+
+/** Availability response built from the TypeSpec scenario for `GET /availability`. */
+export function availabilityResponse(name: string, body?: unknown): Response {
+  const operation = contract.paths['/availability'].get
+  const scenario = operation['x-contract-scenarios'].find(
+    (candidate: { name: string }) => candidate.name === name
+  )
+  expect(scenario, `GET /availability: missing example ${name}`).toBeDefined()
+  const { status } = scenario
+  const payload = body ?? scenario.body
+  const response = operation.responses[String(status)]
+  const schema = response?.content?.['application/json']?.schema
+  expect(schema, `GET /availability: undeclared HTTP ${status}`).toBeDefined()
+  const validate = ajv.compile({ components: contract.components, ...schema })
+  expect(validate(payload), ajv.errorsText(validate.errors ?? undefined)).toBe(true)
+  return Response.json(payload, { status })
+}

@@ -5,6 +5,7 @@ type MeetingType = components['schemas']['MeetingType']
 
 export interface MeetingTypeRepository {
   list(): MeetingType[]
+  find(id: string): MeetingType | undefined
   create(input: components['schemas']['CreateMeetingTypeInput']): MeetingType
 }
 
@@ -15,6 +16,10 @@ export class MemoryMeetingTypeRepository implements MeetingTypeRepository {
     return Array.from(this.meetingTypes.values())
       .sort((a, b) => a.createdAt - b.createdAt || a.value.id.localeCompare(b.value.id))
       .map(({ value }) => value)
+  }
+
+  find(id: string): MeetingType | undefined {
+    return this.meetingTypes.get(id)?.value
   }
 
   create(input: components['schemas']['CreateMeetingTypeInput']): MeetingType {

@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Book } from '@/routes/Book'
+import type { MeetingType } from '@calendar/sdk'
 import { meetingTypesResponse } from './helpers/contract'
 
 afterEach(() => {
@@ -23,6 +24,42 @@ function renderBook() {
 }
 
 describe('Book', () => {
+  it('shows each complete meeting type in API order and lets the guest change selection', async () => {
+    const types: MeetingType[] = [
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Introduction',
+        description: 'First conversation',
+        durationMinutes: 45
+      },
+      {
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Review',
+        description: 'Discuss a project',
+        durationMinutes: 17
+      }
+    ]
+    const fetch = vi.fn().mockResolvedValue(meetingTypesResponse('populated', types))
+    vi.stubGlobal('fetch', fetch)
+    renderBook()
+
+    const first = await screen.findByRole('radio', { name: 'Introduction' })
+    const second = screen.getByRole('radio', { name: 'Review' })
+    expect(screen.getAllByRole('radio')).toEqual([first, second])
+    expect(screen.getByText('First conversation')).toBeInTheDocument()
+    expect(screen.getByText('45 мин.')).toBeInTheDocument()
+    expect(screen.getByText('Discuss a project')).toBeInTheDocument()
+    expect(screen.getByText('17 мин.')).toBeInTheDocument()
+    expect(first).not.toBeChecked()
+    fireEvent.click(first)
+    expect(first).toBeChecked()
+    fireEvent.click(second)
+    expect(second).toBeChecked()
+    expect(first).not.toBeChecked()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('button', { name: /записаться/i })).not.toBeInTheDocument()
+  })
+
   it('loads the empty meeting type list with a way back home', async () => {
     const fetch = vi.fn().mockResolvedValue(meetingTypesResponse('empty'))
     vi.stubGlobal('fetch', fetch)

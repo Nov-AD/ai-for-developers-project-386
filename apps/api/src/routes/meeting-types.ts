@@ -19,6 +19,12 @@ const validationError = z.object({
   fieldErrors: z.record(z.string(), z.array(z.string())).optional()
 }) satisfies z.ZodType<components['schemas']['ValidationError']>
 
+const createInput = z.strictObject({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(2000).default(''),
+  durationMinutes: z.int().min(1).max(540)
+}) satisfies z.ZodType<components['schemas']['CreateMeetingTypeInput']>
+
 const meetingTypes: FastifyPluginAsyncZod = async (fastify): Promise<void> => {
   fastify.get(
     '/meeting-types',
@@ -38,6 +44,32 @@ const meetingTypes: FastifyPluginAsyncZod = async (fastify): Promise<void> => {
       }
     },
     async () => fastify.meetingTypes.list()
+  )
+
+  fastify.post(
+    '/meeting-types',
+    {
+      schema: {
+        querystring: z.strictObject({}),
+        body: createInput,
+        response: { 201: meetingType, 400: validationError }
+      },
+      errorHandler: (error, _request, reply) => {
+        if (
+          error.validation ||
+          error.code === 'FST_ERR_CTP_INVALID_JSON_BODY' ||
+          error.code === 'FST_ERR_CTP_EMPTY_JSON_BODY' ||
+          error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE'
+        ) {
+          return reply.code(400).send({
+            code: 'VALIDATION_ERROR',
+            message: 'Проверьте название, описание и длительность типа встречи.'
+          })
+        }
+        throw error
+      }
+    },
+    async (request, reply) => reply.code(201).send(fastify.meetingTypes.create(request.body))
   )
 }
 

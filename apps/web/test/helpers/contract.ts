@@ -15,13 +15,25 @@ const ajv = new Ajv2020({ allErrors: true, strict: false })
 addFormats(ajv)
 
 /** Mock only HTTP, checking the status and body against generated OpenAPI first. */
-export function meetingTypesResponse(name: 'empty' | 'unknown-query'): Response {
-  const operation = contract.paths['/meeting-types'].get
+export function meetingTypesResponse(
+  name: 'empty' | 'populated' | 'unknown-query',
+  body?: unknown
+): Response {
+  return meetingTypeResponse('get', name, body)
+}
+
+export function meetingTypeResponse(
+  method: 'get' | 'post',
+  name: string,
+  bodyOverride?: unknown
+): Response {
+  const operation = contract.paths['/meeting-types'][method]
   const scenario = operation['x-contract-scenarios'].find(
     (scenario: { name: string }) => scenario.name === name
   )
-  expect(scenario, `GET /meeting-types: missing example ${name}`).toBeDefined()
-  const { status, body } = scenario
+  expect(scenario, `${method} /meeting-types: missing example ${name}`).toBeDefined()
+  const { status } = scenario
+  const body = bodyOverride ?? scenario.body
   const response = operation.responses[String(status)]
   expect(response, `GET /meeting-types: undeclared HTTP ${status}`).toBeDefined()
   const schema = response?.content?.['application/json']?.schema
@@ -29,4 +41,17 @@ export function meetingTypesResponse(name: 'empty' | 'unknown-query'): Response 
   const validate = ajv.compile({ components: contract.components, ...schema })
   expect(validate(body), ajv.errorsText(validate.errors ?? undefined)).toBe(true)
   return Response.json(body, { status })
+}
+
+export async function assertMeetingTypeRequest(request: Request): Promise<unknown> {
+  expect(request.method).toBe('POST')
+  expect(new URL(request.url).pathname).toBe('/meeting-types')
+  expect(new URL(request.url).search).toBe('')
+  expect(request.headers.get('content-type')).toMatch(/^application\/json\b/)
+  const body = await request.json()
+  const schema =
+    contract.paths['/meeting-types'].post.requestBody.content['application/json'].schema
+  const validate = ajv.compile({ components: contract.components, ...schema })
+  expect(validate(body), ajv.errorsText(validate.errors ?? undefined)).toBe(true)
+  return body
 }

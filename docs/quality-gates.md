@@ -54,7 +54,7 @@ mise run audit               # pnpm-lock.yaml по базе OSV
 | `pre-commit` | oxfmt, oxlint, Betterleaks `--staged`, пробелы, переводы строк, конфликты, большие файлы | На staged-файлах, быстро |
 | `commit-msg` | commitlint | На сообщении коммита |
 | `pre-push` | `mise run check` | Полная герметичная проверка |
-| CI | `mise run check` + генерация артефактов, commitlint по диапазону, секреты, oasdiff, OSV | На push в `main` и на pull request |
+| CI | `mise run check` + генерация артефактов, commitlint по диапазону, секреты, oasdiff, OSV | `ci.yml` — push в `main` и pull request; `push-check.yml` — push в остальные ветки |
 | Расписание | OSV-Scanner и Betterleaks | Еженедельно, workflow `security.yml` |
 
 ### Гейт сгенерированного кода

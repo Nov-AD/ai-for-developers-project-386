@@ -118,7 +118,7 @@ mise run check
 - `mise run secrets` — Betterleaks сканирует Git-историю;
 - `mise run audit` — OSV-Scanner проверяет `pnpm-lock.yaml` по базе уязвимостей.
 
-Workflow `.github/workflows/ci.yml` вызывает ту же `mise run check` через `jdx/mise-action`, дополнительно перегенерирует артефакты и падает, если `git diff` не пуст, проверяет сообщения коммитов (commitlint), секреты, ломающие изменения контракта и уязвимости. `.github/workflows/security.yml` повторяет сканирование уязвимостей и секретов по расписанию.
+Workflow `.github/workflows/ci.yml` вызывает ту же `mise run check` через `jdx/mise-action`, дополнительно перегенерирует артефакты и падает, если `git diff` не пуст, проверяет сообщения коммитов (commitlint), секреты, ломающие изменения контракта и уязвимости. На push в любую другую ветку `.github/workflows/push-check.yml` запускает только `mise run check`. `.github/workflows/security.yml` повторяет сканирование уязвимостей и секретов по расписанию.
 
 Хуки `hk` разделены на три уровня:
 

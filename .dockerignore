@@ -1,6 +1,7 @@
 .git
 .github
 .agents
+.opencode
 **/node_modules
 **/dist
 **/coverage
@@ -15,4 +16,5 @@
 mise.local.*
 hk.local.pkl
 opencode.json*
+opencode.local.*
 docs

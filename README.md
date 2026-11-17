@@ -135,6 +135,9 @@ Workflow `.github/workflows/ci.yml` вызывает ту же `mise run check` 
 
 Подборка инструментов, причины выбора и ограничения: [docs/quality-gates.md](docs/quality-gates.md).
 
+Выпуск одного приложения через release-please, обязательный CI release PR и
+блокировка до настройки внешнего credential: [docs/releases.md](docs/releases.md).
+
 Дымовой тест `apps/api/test/smoke.test.ts` поднимает приложение на случайном порту и проверяет, что `GET /health` отвечает `200 { "status": "ok" }`.
 
 ## Установка

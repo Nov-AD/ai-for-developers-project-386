@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: calendar-nov-ad
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    numInstances: 1
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: BOOKING_WINDOW_START
+        value: tomorrow

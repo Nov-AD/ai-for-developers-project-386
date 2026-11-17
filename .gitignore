@@ -12,3 +12,10 @@ mise.local.lock
 hk.local.pkl
 .agents/
 skills-lock.json
+# Local MCP credentials/config overrides must never be committed.
+.opencode/opencode.json
+.opencode/opencode.jsonc
+opencode.local.json
+opencode.local.jsonc
+*.pem
+*.key

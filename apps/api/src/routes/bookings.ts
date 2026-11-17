@@ -122,6 +122,29 @@ const bookingRoutes: FastifyPluginAsyncZod = async (fastify): Promise<void> => {
       return reply.code(201).send(result.booking)
     }
   )
+
+  fastify.get(
+    '/bookings',
+    {
+      schema: {
+        querystring: z.strictObject({}),
+        response: { 200: z.array(booking), 400: validationError }
+      },
+      errorHandler: (error, _request, reply) => {
+        if (error.validation) {
+          return reply.code(400).send({
+            code: 'VALIDATION_ERROR',
+            message: 'Неизвестный параметр запроса.'
+          })
+        }
+        throw error
+      }
+    },
+    async () => {
+      // Recomputed per request: the window advances and finished calls disappear.
+      return fastify.bookings.upcoming(new Date())
+    }
+  )
 }
 
 export default bookingRoutes

@@ -14,6 +14,8 @@ export type SaveBookingResult = { status: 'saved'; booking: Booking } | { status
 
 export interface BookingRepository {
   list(): Booking[]
+  /** Bookings whose end is strictly later than `now`, sorted by start, then UUID. */
+  upcoming(now: Date): Booking[]
   /**
    * Check every booking of every meeting type and save in one synchronous step: no await
    * between the overlap check and the insert, so concurrent requests cannot both win.
@@ -26,6 +28,13 @@ export class MemoryBookingRepository implements BookingRepository {
 
   list(): Booking[] {
     return Array.from(this.bookings.values())
+  }
+
+  upcoming(now: Date): Booking[] {
+    const time = now.getTime()
+    return this.list()
+      .filter((booking) => Date.parse(booking.end) > time)
+      .sort((a, b) => a.start.localeCompare(b.start) || a.id.localeCompare(b.id))
   }
 
   save(input: SaveBookingInput): SaveBookingResult {

@@ -7,6 +7,7 @@ import {
 } from '@calendar/sdk'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { MeetingTypes } from '@/components/MeetingTypes'
+import { UpcomingBookings } from '@/components/UpcomingBookings'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 
@@ -165,6 +166,12 @@ export function Owner() {
           Типы встреч
         </h2>
         <MeetingTypes />
+      </section>
+      <section aria-labelledby="upcoming-heading">
+        <h2 id="upcoming-heading" className="text-xl font-semibold">
+          Предстоящие записи
+        </h2>
+        <UpcomingBookings />
       </section>
     </div>
   )

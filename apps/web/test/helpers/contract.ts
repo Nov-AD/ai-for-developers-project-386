@@ -110,3 +110,21 @@ export async function assertCreateBookingRequest(
   expect(validate(body), ajv.errorsText(validate.errors ?? undefined)).toBe(true)
   return body
 }
+
+/** Upcoming bookings response built from the TypeSpec scenarios for `GET /bookings`. */
+export function upcomingResponse(
+  name: 'empty' | 'populated' | 'unknown-query',
+  body?: unknown
+): Response {
+  const operation = contract.paths['/bookings'].get
+  const scenario = operation['x-contract-scenarios'].find(
+    (candidate: { name: string }) => candidate.name === name
+  )
+  expect(scenario, `GET /bookings: missing example ${name}`).toBeDefined()
+  const { status } = scenario
+  const payload = body ?? scenario.body
+  const schema = operation.responses[String(status)].content['application/json'].schema
+  const validate = ajv.compile({ components: contract.components, ...schema })
+  expect(validate(payload), ajv.errorsText(validate.errors ?? undefined)).toBe(true)
+  return Response.json(payload, { status })
+}

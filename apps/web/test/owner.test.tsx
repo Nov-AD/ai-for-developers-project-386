@@ -6,7 +6,8 @@ import App from '@/App'
 import {
   assertMeetingTypeRequest,
   meetingTypeResponse,
-  meetingTypesResponse
+  meetingTypesResponse,
+  upcomingResponse
 } from './helpers/contract'
 
 afterEach(() => {
@@ -44,6 +45,8 @@ describe('Owner', () => {
     }
     let saved = false
     const fetch = vi.fn(async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/bookings') return upcomingResponse('empty')
       if (request.method === 'POST') {
         expect(await assertMeetingTypeRequest(request)).toEqual({
           name: ' Introduction ',
@@ -54,7 +57,7 @@ describe('Owner', () => {
         return meetingTypeResponse('post', 'created', type)
       }
       expect(request.method).toBe('GET')
-      expect(new URL(request.url).pathname).toBe('/meeting-types')
+      expect(url.pathname).toBe('/meeting-types')
       return saved ? meetingTypesResponse('populated', [type]) : meetingTypesResponse('empty')
     })
     vi.stubGlobal('fetch', fetch)
@@ -104,7 +107,10 @@ describe('Owner', () => {
   ])(
     'validates the form without losing input or sending invalid data (%s, duration %s)',
     async (name, description, duration, message) => {
-      const fetch = vi.fn().mockImplementation(() => Promise.resolve(meetingTypesResponse('empty')))
+      const fetch = vi.fn(async (request: Request) => {
+        if (new URL(request.url).pathname === '/bookings') return upcomingResponse('empty')
+        return meetingTypesResponse('empty')
+      })
       vi.stubGlobal('fetch', fetch)
       renderApp()
       await screen.findByText('Типов встреч пока нет. Загляните позже.')
@@ -115,7 +121,7 @@ describe('Owner', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(message)
       expect(screen.getByLabelText('Название')).toHaveValue(name)
       expect(screen.getByLabelText('Описание (необязательно)')).toHaveValue(description)
-      expect(fetch.mock.calls).toHaveLength(1)
+      expect(fetch.mock.calls.filter(([request]) => request.method === 'POST')).toHaveLength(0)
       expect(screen.getByRole('button', { name: 'Создать тип встречи' })).toBeEnabled()
     }
   )
@@ -129,6 +135,7 @@ describe('Owner', () => {
     }
     let attempts = 0
     const fetch = vi.fn(async (request: Request) => {
+      if (new URL(request.url).pathname === '/bookings') return upcomingResponse('empty')
       if (request.method === 'POST') {
         await assertMeetingTypeRequest(request)
         attempts += 1
@@ -169,6 +176,7 @@ describe('Owner', () => {
   it('blocks repeat submissions and editing while saving and confirms only after the response', async () => {
     const pending = Promise.withResolvers<Response>()
     const fetch = vi.fn(async (request: Request) => {
+      if (new URL(request.url).pathname === '/bookings') return upcomingResponse('empty')
       if (request.method === 'POST') {
         await assertMeetingTypeRequest(request)
         return pending.promise
@@ -196,6 +204,7 @@ describe('Owner', () => {
 
   it('does not automatically retry a network-failed creation or discard the form', async () => {
     const fetch = vi.fn(async (request: Request) => {
+      if (new URL(request.url).pathname === '/bookings') return upcomingResponse('empty')
       if (request.method === 'POST') throw new TypeError('Failed to fetch')
       return meetingTypesResponse('empty')
     })
@@ -217,24 +226,29 @@ describe('Owner', () => {
   it('opens /owner directly, distinguishes loading and read error from empty data and retries', async () => {
     const first = Promise.withResolvers<Response>()
     const retry = Promise.withResolvers<Response>()
-    const fetch = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(retry.promise)
+    let meetingTypeAttempts = 0
+    const fetch = vi.fn(async (request: Request) => {
+      if (new URL(request.url).pathname === '/bookings') return upcomingResponse('empty')
+      meetingTypeAttempts += 1
+      return meetingTypeAttempts === 1 ? first.promise : retry.promise
+    })
     vi.stubGlobal('fetch', fetch)
     renderApp()
 
     expect(
       screen.getByRole('heading', { level: 1, name: 'Управление календарём' })
     ).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Загружаем типы встреч…')
+    expect(screen.getByText('Загружаем типы встреч…')).toHaveAttribute('role', 'status')
     expect(screen.queryByText('Типов встреч пока нет. Загляните позже.')).not.toBeInTheDocument()
     first.resolve(meetingTypesResponse('unknown-query'))
     expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось загрузить типы встреч.')
     expect(screen.queryByText('Типов встреч пока нет. Загляните позже.')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Повторить загрузку' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('Загружаем типы встреч…')
+    expect(await screen.findByText('Загружаем типы встреч…')).toHaveAttribute('role', 'status')
     retry.resolve(meetingTypesResponse('empty'))
     expect(await screen.findByText('Типов встреч пока нет. Загляните позже.')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(meetingTypeAttempts).toBe(2)
   })
 })

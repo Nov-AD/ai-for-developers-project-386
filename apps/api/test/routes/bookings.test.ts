@@ -208,6 +208,19 @@ describe('POST /bookings', () => {
     expect(responses.filter(({ statusCode }) => statusCode === 201)).toHaveLength(1)
     expect(responses.filter(({ statusCode }) => statusCode === 409)).toHaveLength(4)
     expect(await slots(instance, id)).not.toContain('2026-11-18T06:00:00Z')
+
+    // The owner's read exposes exactly the one winning booking, with its real identifier.
+    const saved = responses
+      .find(({ statusCode }) => statusCode === 201)!
+      .json<{
+        id: string
+        guestName: string
+      }>()
+    const upcoming = await instance.inject({ method: 'GET', url: '/bookings' })
+    expect(upcoming.statusCode).toBe(200)
+    const listed = upcoming.json<Array<{ id: string; guestName: string }>>()
+    expect(listed.map(({ id: listedId }) => listedId)).toEqual([saved.id])
+    expect(listed[0]!.guestName).toBe(saved.guestName)
   })
 
   it('saves every concurrent non-overlapping request', async () => {
@@ -221,6 +234,14 @@ describe('POST /bookings', () => {
     expect(responses.map(({ statusCode }) => statusCode)).toEqual([201, 201, 201])
     const available = await slots(instance, id)
     for (const start of starts) expect(available).not.toContain(start)
+
+    // Every concurrently saved booking is visible to the owner, in start order.
+    const savedIds = responses.map((response) => response.json<{ id: string }>().id)
+    const listed = (await instance.inject({ method: 'GET', url: '/bookings' })).json<
+      Array<{ id: string; start: string }>
+    >()
+    expect(listed.map(({ id: listedId }) => listedId)).toEqual(savedIds)
+    expect(listed.map(({ start }) => start)).toEqual(starts)
   })
 
   it('keeps bookings isolated between application instances', async () => {

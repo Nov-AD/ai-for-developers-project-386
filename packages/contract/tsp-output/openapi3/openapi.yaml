@@ -1,6 +1,7 @@
 openapi: 3.1.0
 info:
   title: Call scheduling API
+  description: API for scheduling calls with a single calendar owner.
   version: 0.0.0
 tags: []
 paths:

@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetHealthData, GetHealthResponses } from './types.gen';
+import type { CreateBookingData, CreateBookingErrors, CreateBookingResponses, CreateMeetingTypeData, CreateMeetingTypeErrors, CreateMeetingTypeResponses, GetAvailabilityData, GetAvailabilityErrors, GetAvailabilityResponses, GetHealthData, GetHealthResponses, ListMeetingTypesData, ListMeetingTypesErrors, ListMeetingTypesResponses, ListUpcomingBookingsData, ListUpcomingBookingsErrors, ListUpcomingBookingsResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -19,6 +19,53 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
+ * Compute current availability for the required meetingTypeId query parameter; no other parameters accepted. Use the service-wide owner schedule/window/overlap rules on every request. Missing/malformed UUID is 400; well-formed unknown UUID is 404. Empty availability is 200 with an empty slots array.
+ */
+export const getAvailability = <ThrowOnError extends boolean = false>(options: Options<GetAvailabilityData, ThrowOnError>): RequestResult<GetAvailabilityResponses, GetAvailabilityErrors, ThrowOnError> => (options.client ?? client).get<GetAvailabilityResponses, GetAvailabilityErrors, ThrowOnError>({ url: '/availability', ...options });
+
+/**
+ * Return all types' bookings whose end is strictly later than now, including calls already in progress; exclude calls ending exactly now. Recompute now per request. Sort by start ascending, then UUID ascending. Empty is 200 []. Display in Europe/Moscow with an explicit time zone. No query parameters. Refresh on owner page entry, focus and manual refresh; no polling required.
+ */
+export const listUpcomingBookings = <ThrowOnError extends boolean = false>(options?: Options<ListUpcomingBookingsData, ThrowOnError>): RequestResult<ListUpcomingBookingsResponses, ListUpcomingBookingsErrors, ThrowOnError> => (options?.client ?? client).get<ListUpcomingBookingsResponses, ListUpcomingBookingsErrors, ThrowOnError>({ url: '/bookings', ...options });
+
+/**
+ * Revalidate the current type, window, schedule, future start and overlaps, atomically save
+ * and return HTTP 201 with server-computed end and meeting type details. Validation is 400
+ * VALIDATION_ERROR, then unknown type is 404 MEETING_TYPE_NOT_FOUND, then invalid schedule
+ * selection is 400 INVALID_SLOT, then overlap is 409 SLOT_CONFLICT. No query parameters.
+ * Only a saved response confirms success. Do not retry creating requests automatically.
+ * If the network loses the response, creation may have succeeded: show an uncertain result,
+ * refresh availability when connection returns and do not claim the booking is absent.
+ * After success refresh availability/upcoming lists; after conflict preserve name/type and
+ * refresh availability. There is no idempotency key or booking lookup/confirmation endpoint.
+ */
+export const createBooking = <ThrowOnError extends boolean = false>(options: Options<CreateBookingData, ThrowOnError>): RequestResult<CreateBookingResponses, CreateBookingErrors, ThrowOnError> => (options.client ?? client).post<CreateBookingResponses, CreateBookingErrors, ThrowOnError>({
+    url: '/bookings',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Service health check.
  */
 export const getHealth = <ThrowOnError extends boolean = false>(options?: Options<GetHealthData, ThrowOnError>): RequestResult<GetHealthResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetHealthResponses, unknown, ThrowOnError>({ url: '/health', ...options });
+
+/**
+ * Return all meeting types in creation order, with UUID ascending as the stable tie-breaker. New types are visible immediately. The initial store is empty. No query parameters are accepted.
+ */
+export const listMeetingTypes = <ThrowOnError extends boolean = false>(options?: Options<ListMeetingTypesData, ThrowOnError>): RequestResult<ListMeetingTypesResponses, ListMeetingTypesErrors, ThrowOnError> => (options?.client ?? client).get<ListMeetingTypesResponses, ListMeetingTypesErrors, ThrowOnError>({ url: '/meeting-types', ...options });
+
+/**
+ * Create a meeting type; trim name, validate all fields, then generate UUID. Omitted description becomes empty. No query parameters are accepted. HTTP 201 contains the complete saved type.
+ */
+export const createMeetingType = <ThrowOnError extends boolean = false>(options: Options<CreateMeetingTypeData, ThrowOnError>): RequestResult<CreateMeetingTypeResponses, CreateMeetingTypeErrors, ThrowOnError> => (options.client ?? client).post<CreateMeetingTypeResponses, CreateMeetingTypeErrors, ThrowOnError>({
+    url: '/meeting-types',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});

@@ -1,0 +1,52 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+# Writes use only the repository-scoped external release credential below.
+# Ordinary CI and the ambient GITHUB_TOKEN retain read-only access.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: [check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No checkout or application code execution in the credential-bearing job.
+      - name: Require successful CI for the current main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CI_SHA: ${{ github.sha }}
+        run: |
+          main_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$main_sha" != "$CI_SHA" ]; then
+            echo "::error::Main has advanced; wait for CI on the current commit."
+            exit 1
+          fi
+
+      - name: Require the external release credential
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::Missing RELEASE_PLEASE_TOKEN. See docs/releases.md; no GITHUB_TOKEN fallback."
+            exit 1
+          fi
+
+      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          target-branch: main
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

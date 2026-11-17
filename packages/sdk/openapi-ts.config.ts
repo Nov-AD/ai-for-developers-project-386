@@ -9,6 +9,8 @@ export default defineConfig({
   plugins: [
     '@hey-api/typescript',
     '@hey-api/sdk',
+    { name: 'zod', exportFromIndex: true },
+    { name: '@tanstack/react-query', exportFromIndex: true },
     {
       name: '@hey-api/client-fetch',
       // Re-export `client` from the package entry point so apps can call

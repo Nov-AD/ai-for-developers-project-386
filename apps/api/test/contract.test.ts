@@ -1,52 +1,17 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import Ajv2020 from 'ajv/dist/2020.js'
 import Fastify, { type FastifyInstance, type HTTPMethods } from 'fastify'
-import { afterEach, describe, expect, it } from 'vitest'
-import { parse } from 'yaml'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import app from '../src/app.ts'
-
-const specPath = resolve(
-  import.meta.dirname,
-  '../../../packages/contract/tsp-output/openapi3/openapi.yaml'
-)
-const spec = parse(readFileSync(specPath, 'utf8'))
-
-type JsonSchema = Record<string, unknown>
-
-type Operation = {
-  responses: Record<
-    string,
-    {
-      content?: Record<string, { schema?: JsonSchema }>
-    }
-  >
-}
-
-type PathItem = Partial<Record<HttpMethod, Operation>>
-
-const httpMethods = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const
-
-type HttpMethod = (typeof httpMethods)[number]
-
-const paths = spec.paths as Record<string, PathItem>
+import {
+  assertContractResponse,
+  contract,
+  contractOperations,
+  type HttpMethod
+} from './helpers/contract.ts'
+import { prepareContractScenario } from './helpers/contract-scenarios.ts'
 
 /** OpenAPI uses `{id}` for path parameters, Fastify uses `:id`. */
 function toFastifyUrl(openapiPath: string): string {
   return openapiPath.replace(/\{([^}]+)\}/g, ':$1')
-}
-
-function operations(): Array<{
-  method: HttpMethod
-  path: string
-  operation: Operation
-}> {
-  return Object.entries(paths).flatMap(([path, item]) =>
-    httpMethods.flatMap((method) => {
-      const operation = item[method]
-      return operation ? [{ method, path, operation }] : []
-    })
-  )
 }
 
 const instances: FastifyInstance[] = []
@@ -77,17 +42,20 @@ async function build(): Promise<{
 
 afterEach(async () => {
   await Promise.all(instances.splice(0).map(async (instance) => instance.close()))
+  vi.useRealTimers()
+  vi.unstubAllEnvs()
 })
 
 describe('API contract', () => {
   it('is OpenAPI 3.1', () => {
-    expect(spec.openapi).toBe('3.1.0')
+    expect(contract.openapi).toBe('3.1.0')
   })
 
-  it('implements every operation declared in the contract', async () => {
-    const { instance } = await build()
+  it.each(contractOperations)(
+    'implements $method $path ($operation.operationId)',
+    async ({ method, path }) => {
+      const { instance } = await build()
 
-    for (const { method, path } of operations()) {
       expect(
         instance.hasRoute({
           method: method.toUpperCase() as HTTPMethods,
@@ -96,12 +64,12 @@ describe('API contract', () => {
         `${method.toUpperCase()} ${path} is declared in the contract but not implemented`
       ).toBe(true)
     }
-  })
+  )
 
   it('exposes no routes missing from the contract', async () => {
     const { routes } = await build()
     const declared = new Set(
-      operations().map(({ method, path }) => `${method.toUpperCase()} ${toFastifyUrl(path)}`)
+      contractOperations.map(({ method, path }) => `${method.toUpperCase()} ${toFastifyUrl(path)}`)
     )
 
     for (const route of routes) {
@@ -116,33 +84,53 @@ describe('API contract', () => {
     }
   })
 
-  it('responds with statuses and bodies allowed by the contract', async () => {
-    const { instance } = await build()
-    const ajv = new Ajv2020({ allErrors: true, strict: false })
+  const scenarios = contractOperations.flatMap(({ method, path, operation }) =>
+    (operation['x-contract-scenarios'] ?? []).map((scenario) => ({
+      method,
+      path,
+      operation,
+      scenario,
+      label: `${method.toUpperCase()} ${path}: ${scenario.name} → ${scenario.status}`
+    }))
+  )
 
-    for (const { method, path, operation } of operations()) {
+  it.each(scenarios)(
+    '$label responds with the declared status and JSON schema',
+    async ({ method, path, operation, scenario }) => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-11-17T09:00:00Z'))
+      vi.stubEnv('BOOKING_WINDOW_START', 'tomorrow')
+      const { instance } = await build()
+      expect(
+        instance.hasRoute({
+          method: method.toUpperCase() as HTTPMethods,
+          url: toFastifyUrl(path)
+        }),
+        `${method.toUpperCase()} ${path} is declared in the contract but not implemented`
+      ).toBe(true)
+      const request = await prepareContractScenario(instance, operation.operationId, scenario)
       const response = await instance.inject({
         method: method.toUpperCase() as HTTPMethods,
-        url: toFastifyUrl(path)
+        url: path,
+        query: request.query as Record<string, string> | undefined,
+        ...(request.body === undefined ? {} : { payload: request.body as Record<string, unknown> })
       })
 
-      const declared = operation.responses[String(response.statusCode)]
-      expect(
-        declared,
-        `${method.toUpperCase()} ${path} responded ${response.statusCode}, which the contract does not declare`
-      ).toBeDefined()
-
-      const schema = declared?.content?.['application/json']?.schema
-      if (!schema) continue
-
-      // Resolve `#/components/schemas/*` references against the contract.
-      const validate = ajv.compile({ components: spec.components, ...schema })
-      const body: unknown = response.body ? response.json() : undefined
-
-      expect(
-        validate(body),
-        `${method.toUpperCase()} ${path} response violates the contract: ${ajv.errorsText(validate.errors ?? undefined)}`
-      ).toBe(true)
+      expect(response.statusCode).toBe(scenario.status)
+      expect(response.headers['content-type']).toMatch(/^application\/json\b/)
+      const body: unknown = response.json()
+      assertContractResponse(operation, response.statusCode, body)
+      if (scenario.status >= 400) {
+        expect(body).toMatchObject({ code: (scenario.body as { code: string }).code })
+      }
+      if (scenario.name === 'empty') {
+        if (operation.operationId === 'getAvailability') expect(body).toMatchObject({ slots: [] })
+        else expect(body).toEqual([])
+      }
+      if (scenario.name === 'populated') expect(body).toHaveLength(1)
+      if (scenario.name === 'available') {
+        expect((body as { slots: unknown[] }).slots.length).toBeGreaterThan(0)
+      }
     }
-  })
+  )
 })

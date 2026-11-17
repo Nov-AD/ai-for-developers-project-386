@@ -93,7 +93,7 @@ pnpm api:types        # OpenAPI → серверные типы
 
 ### Проверки
 
-Все проверки запускаются одной командой — локально, в Git-хуках и в CI:
+Все герметичные проверки запускаются одной командой — локально, в Git-хуках и в CI:
 
 ```bash
 mise run check
@@ -101,17 +101,40 @@ mise run check
 
 Задача ставит зависимости из lock-файла (`pnpm install --frozen-lockfile`), затем последовательно запускает:
 
-- `mise run lint` — oxlint во всех пакетах;
+- `mise run lint` — oxlint с `--deny-warnings` и jactionlint для GitHub Actions;
+- `mise run fmt:check` — oxfmt в режиме проверки;
 - `mise run typecheck` — TypeScript и TypeSpec (компиляция с `--warn-as-error`);
+- `mise run knip` — неиспользуемые файлы, экспорты и зависимости;
+- `mise run syncpack` — единые версии зависимостей в монорепо;
+- `mise run arch` — границы пакетов и циклы импортов (dependency-cruiser);
+- `mise run contract:lint` — vacuum для сгенерированного OpenAPI, минимальный score 90;
 - `mise run test` — Vitest: контрактные тесты и дымовой тест API.
 
-Workflow `.github/workflows/ci.yml` вызывает ту же команду `mise run check` через `jdx/mise-action` и `mise install --locked`, поэтому локальный и CI-результат совпадают. Хуки `pre-commit` и `pre-push`, установленные через `hk`, запускают эту же задачу.
+Безопасные автоправки: `mise run fix` (oxfmt и oxlint `--fix`).
+
+Проверки, которым нужна сеть или база сравнения, вынесены в CI:
+
+- `mise run contract:breaking` — oasdiff сравнивает OpenAPI с базовой ветвью и падает на ломающих изменениях (на pull request);
+- `mise run secrets` — Betterleaks сканирует Git-историю;
+- `mise run audit` — OSV-Scanner проверяет `pnpm-lock.yaml` по базе уязвимостей.
+
+Workflow `.github/workflows/ci.yml` вызывает ту же `mise run check` через `jdx/mise-action`, дополнительно перегенерирует артефакты и падает, если `git diff` не пуст, проверяет сообщения коммитов (commitlint), секреты, ломающие изменения контракта и уязвимости. `.github/workflows/security.yml` повторяет сканирование уязвимостей и секретов по расписанию.
+
+Хуки `hk` разделены на три уровня:
+
+- `pre-commit` — быстрые проверки только staged-файлов: oxfmt, oxlint, Betterleaks (`--staged`), пробелы, переводы строк, конфликты слияния, большие файлы;
+- `commit-msg` — commitlint проверяет Conventional Commits;
+- `pre-push` — полная `mise run check`.
+
+Хук можно обойти через `--no-verify`, поэтому настоящий гейт — CI.
+
+Подборка инструментов, причины выбора и ограничения: [docs/quality-gates.md](docs/quality-gates.md).
 
 Дымовой тест `apps/api/test/smoke.test.ts` поднимает приложение на случайном порту и проверяет, что `GET /health` отвечает `200 { "status": "ok" }`.
 
 ## Установка
 
-Понадобятся только [mise](https://mise.jdx.dev/) и Git. Версии Node.js, pnpm, hk и pitchfork зафиксированы в `mise.toml`, а контрольные суммы загрузок — в `mise.lock`.
+Понадобятся только [mise](https://mise.jdx.dev/) и Git. Версии Node.js, pnpm, hk, pitchfork, jactionlint, Betterleaks, OSV-Scanner, vacuum и oasdiff зафиксированы в `mise.toml`, а контрольные суммы загрузок — в `mise.lock`.
 
 ```bash
 git clone https://github.com/Nov-AD/ai-for-developers-project-386.git

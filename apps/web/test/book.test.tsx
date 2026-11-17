@@ -1,13 +1,25 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Book } from '@/routes/Book'
 import type { MeetingType } from '@calendar/sdk'
-import { availabilityResponse, meetingTypesResponse } from './helpers/contract'
+import {
+  assertCreateBookingRequest,
+  availabilityResponse,
+  bookingErrorResponse,
+  bookingResponse,
+  meetingTypesResponse
+} from './helpers/contract'
+
+beforeEach(() => {
+  // Guest zone comes from the browser; pin it so displayed times are deterministic.
+  vi.stubEnv('TZ', 'Europe/Moscow')
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 function renderBook() {
@@ -258,5 +270,162 @@ describe('Book availability', () => {
     expect(label).toHaveTextContent('18 нояб. 2026 г., 01:00')
     expect(label?.textContent).toMatch(/GMT-5|EST|UTC−5/)
     expect(screen.getByText(/America\/New_York/)).toBeInTheDocument()
+  })
+})
+
+describe('Book booking creation', () => {
+  const intro: MeetingType = {
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Introduction',
+    description: 'First conversation',
+    durationMinutes: 45
+  }
+  const availabilityBody = {
+    ownerTimeZone: 'Europe/Moscow',
+    windowStartDate: '2026-11-18',
+    windowEndDate: '2026-11-21',
+    slots: [{ start: '2026-11-18T06:00:00Z', end: '2026-11-18T06:45:00Z' }]
+  }
+  const bookingBody = {
+    id: '22222222-2222-4222-8222-222222222222',
+    meetingType: intro,
+    guestName: 'Анна',
+    start: '2026-11-18T06:00:00Z',
+    end: '2026-11-18T06:45:00Z'
+  }
+
+  function mockApi(
+    booking: () => Response | Promise<Response>,
+    availability: () => Response = () => availabilityResponse('available', availabilityBody)
+  ) {
+    const fetch = vi.fn(async (input: Request) => {
+      const url = new URL(input.url)
+      if (url.pathname === '/meeting-types') return meetingTypesResponse('populated', [intro])
+      if (url.pathname === '/availability') return availability()
+      if (url.pathname === '/bookings' && input.method === 'POST') return booking()
+      throw new Error(`Unexpected request ${input.method} ${url.pathname}`)
+    })
+    vi.stubGlobal('fetch', fetch)
+    return fetch
+  }
+
+  async function pickSlot() {
+    fireEvent.click(await screen.findByRole('radio', { name: 'Introduction' }))
+    fireEvent.click(await screen.findByRole('button', { name: /18 ноября/ }))
+    fireEvent.click(await screen.findByRole('radio', { name: /09:00/ }))
+  }
+
+  function nameInput() {
+    return screen.getByLabelText('Ваше имя')
+  }
+
+  it('shows the summary, sends the contract body and confirms from the server response', async () => {
+    const fetch = mockApi(() => bookingResponse(bookingBody))
+    renderBook()
+    await pickSlot()
+
+    const summary = screen.getByRole('region', { name: 'Проверьте выбор' })
+    expect(within(summary).getByText('Introduction')).toBeInTheDocument()
+    expect(within(summary).getByText('45 мин.')).toBeInTheDocument()
+    const submit = screen.getByRole('button', { name: 'Записаться' })
+    expect(submit).toBeDisabled()
+
+    fireEvent.change(nameInput(), { target: { value: '  Анна  ' } })
+    expect(submit).toBeEnabled()
+    fireEvent.click(submit)
+
+    const confirmation = await screen.findByRole('region', { name: 'Запись подтверждена' })
+    expect(within(confirmation).getByText('Анна')).toBeInTheDocument()
+    expect(within(confirmation).getByText('Introduction')).toBeInTheDocument()
+    expect(within(confirmation).getByText(/09:00/)).toBeInTheDocument()
+    expect(within(confirmation).getByText(/09:45/)).toBeInTheDocument()
+    expect(within(confirmation).getByText('45 мин.')).toBeInTheDocument()
+
+    const post = fetch.mock.calls.find(
+      ([request]) => request.method === 'POST' && new URL(request.url).pathname === '/bookings'
+    )
+    expect(post).toBeDefined()
+    expect(await assertCreateBookingRequest(post![0])).toEqual({
+      meetingTypeId: intro.id,
+      start: '2026-11-18T06:00:00Z',
+      guestName: 'Анна'
+    })
+  })
+
+  it('blocks repeated submission while the request is in flight', async () => {
+    const deferred = Promise.withResolvers<Response>()
+    const fetched: Request[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: Request) => {
+        const url = new URL(input.url)
+        if (url.pathname === '/meeting-types') return meetingTypesResponse('populated', [intro])
+        if (url.pathname === '/availability')
+          return availabilityResponse('available', availabilityBody)
+        fetched.push(input)
+        return deferred.promise
+      })
+    )
+    renderBook()
+    await pickSlot()
+    fireEvent.change(nameInput(), { target: { value: 'Анна' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Записаться' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Сохраняем запись…')
+    expect(screen.getByRole('button', { name: 'Записаться' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Записаться' }))
+    fireEvent.submit(screen.getByRole('form', { name: 'Создание записи' }))
+    expect(fetched).toHaveLength(1)
+
+    deferred.resolve(bookingResponse(bookingBody))
+    expect(await screen.findByRole('heading', { name: 'Запись подтверждена' })).toBeInTheDocument()
+  })
+
+  it('explains a conflict, keeps the name and type and clears the taken slot', async () => {
+    const fetch = mockApi(() => bookingErrorResponse('SLOT_CONFLICT'))
+    renderBook()
+    await pickSlot()
+    fireEvent.change(nameInput(), { target: { value: 'Анна' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Записаться' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Это время уже занято')
+    expect(screen.queryByText('Запись подтверждена')).not.toBeInTheDocument()
+    expect(nameInput()).toHaveValue('Анна')
+    expect(screen.getByRole('radio', { name: 'Introduction' })).toBeChecked()
+    expect(screen.queryByRole('button', { name: 'Записаться' })).not.toBeInTheDocument()
+
+    const availabilityCalls = fetch.mock.calls.filter(
+      ([request]) => new URL(request.url).pathname === '/availability'
+    )
+    expect(availabilityCalls.length).toBeGreaterThan(1)
+  })
+
+  it('does not claim success or absence when the network fails', async () => {
+    const fetch = mockApi(() => Promise.reject(new TypeError('Failed to fetch')))
+    renderBook()
+    await pickSlot()
+    fireEvent.change(nameInput(), { target: { value: 'Анна' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Записаться' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Результат неизвестен')
+    expect(screen.queryByText('Запись подтверждена')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Записаться' })).toBeEnabled()
+    expect(
+      fetch.mock.calls.filter(
+        ([request]) => request.method === 'POST' && new URL(request.url).pathname === '/bookings'
+      )
+    ).toHaveLength(1)
+  })
+
+  it('keeps the selection and name after a validation error', async () => {
+    mockApi(() => bookingErrorResponse('VALIDATION_ERROR'))
+    renderBook()
+    await pickSlot()
+    fireEvent.change(nameInput(), { target: { value: 'Анна' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Записаться' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось создать запись')
+    expect(nameInput()).toHaveValue('Анна')
+    expect(screen.getByRole('radio', { name: /09:00/ })).toBeChecked()
   })
 })

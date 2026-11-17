@@ -25,7 +25,7 @@ export function ownerWindow(mode: BookingWindowStart, now: Date): OwnerWindow {
 }
 
 /** RFC 3339 UTC instant with seconds and no fractional part, as required by the contract. */
-function utcInstant(instant: Date): string {
+export function utcInstant(instant: Date): string {
   return formatInTimeZone(instant, 'UTC', "yyyy-MM-dd'T'HH:mm:ss'Z'")
 }
 
@@ -36,6 +36,39 @@ function overlaps(slotStart: number, slotEnd: number, bookings: TimeInterval[]):
     // Half-open intervals: touching endpoints do not overlap.
     return slotStart < end && slotEnd > start
   })
+}
+
+/**
+ * A start is bookable only when it lies on the owner's grid, fully inside working hours,
+ * inside the current window and strictly in the future. Availability never replaces this check.
+ */
+export function isBookableStart(options: {
+  start: Date
+  durationMinutes: number
+  window: OwnerWindow
+  now: Date
+}): boolean {
+  const { start, durationMinutes, window, now } = options
+  if (Number.isNaN(start.getTime()) || start.getTime() <= now.getTime()) return false
+
+  const dateKey = formatInTimeZone(start, OWNER_TIME_ZONE, 'yyyy-MM-dd')
+  if (dateKey < window.startDate || dateKey >= window.endDate) return false
+  if (getISODay(parseISO(dateKey)) > 5) return false
+
+  const [hours, minutes] = formatInTimeZone(start, OWNER_TIME_ZONE, 'HH:mm')
+    .split(':')
+    .map(Number) as [number, number]
+  const offset = hours * 60 + minutes - WORKDAY_START_MINUTES
+  if (offset < 0 || offset % SLOT_STEP_MINUTES !== 0) return false
+  if (hours * 60 + minutes + durationMinutes > WORKDAY_END_MINUTES) return false
+
+  // The instant must be the exact local wall-clock time, not a DST approximation.
+  return (
+    fromZonedTime(
+      `${dateKey}T${formatInTimeZone(start, OWNER_TIME_ZONE, 'HH:mm')}:00`,
+      OWNER_TIME_ZONE
+    ).getTime() === start.getTime()
+  )
 }
 
 /**

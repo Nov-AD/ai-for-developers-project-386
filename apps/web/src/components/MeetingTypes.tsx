@@ -1,11 +1,11 @@
-import { listMeetingTypesOptions } from '@calendar/sdk'
+import { listMeetingTypesOptions, type MeetingType } from '@calendar/sdk'
 import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 
 type Props = {
   selectedId?: string
-  onSelect?: (id: string) => void
+  onSelect?: (type: MeetingType) => void
 }
 
 export function MeetingTypes({ selectedId, onSelect }: Props) {
@@ -51,7 +51,7 @@ export function MeetingTypes({ selectedId, onSelect }: Props) {
                           name="meetingTypeId"
                           value={type.id}
                           checked={selectedId === type.id}
-                          onChange={() => onSelect(type.id)}
+                          onChange={() => onSelect(type)}
                           aria-describedby={`details-${type.id}`}
                           className="mt-1 size-4 shrink-0 accent-primary"
                         />

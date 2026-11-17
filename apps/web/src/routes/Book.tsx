@@ -1,9 +1,20 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
-import { getAvailabilityOptions } from '@calendar/sdk'
-import { useQuery } from '@tanstack/react-query'
+import {
+  createBookingMutation,
+  getAvailabilityOptions,
+  getAvailabilityQueryKey,
+  listUpcomingBookingsQueryKey,
+  zMeetingTypeNotFoundError,
+  zSlotConflictError,
+  zValidationError,
+  zInvalidSlotError,
+  type Booking
+} from '@calendar/sdk'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { MeetingTypes } from '@/components/MeetingTypes'
 import { Button } from '@/components/ui/button'
+import type { MeetingType } from '@calendar/sdk'
 import {
   dateKeyInZone,
   dateKeysBetween,
@@ -13,15 +24,93 @@ import {
   ownerZone
 } from '@/lib/time'
 
+function errorCode(error: unknown): string | undefined {
+  for (const schema of [
+    zSlotConflictError,
+    zInvalidSlotError,
+    zValidationError,
+    zMeetingTypeNotFoundError
+  ]) {
+    const parsed = schema.safeParse(error)
+    if (parsed.success) return parsed.data.code
+  }
+  return undefined
+}
+
+function Confirmation({ booking, timeZone }: { booking: Booking; timeZone: string }) {
+  return (
+    <section aria-labelledby="confirmation-heading" className="space-y-3 rounded-xl border p-6">
+      <h2 id="confirmation-heading" className="text-xl font-semibold">
+        Запись подтверждена
+      </h2>
+      <dl className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <dt className="text-sm text-muted-foreground">Тип встречи</dt>
+          <dd>{booking.meetingType.name}</dd>
+        </div>
+        <div>
+          <dt className="text-sm text-muted-foreground">Имя</dt>
+          <dd>{booking.guestName}</dd>
+        </div>
+        <div>
+          <dt className="text-sm text-muted-foreground">Начало</dt>
+          <dd>{formatInstant(booking.start, timeZone)}</dd>
+        </div>
+        <div>
+          <dt className="text-sm text-muted-foreground">Окончание</dt>
+          <dd>{formatInstant(booking.end, timeZone)}</dd>
+        </div>
+        <div>
+          <dt className="text-sm text-muted-foreground">Длительность</dt>
+          <dd>{booking.meetingType.durationMinutes} мин.</dd>
+        </div>
+        <div>
+          <dt className="text-sm text-muted-foreground">Часовой пояс</dt>
+          <dd>{timeZone}</dd>
+        </div>
+      </dl>
+    </section>
+  )
+}
+
 export function Book() {
-  const [selectedTypeId, setSelectedTypeId] = useState<string>()
+  const [selectedType, setSelectedType] = useState<MeetingType>()
+  const selectedTypeId = selectedType?.id
   const [selectedDay, setSelectedDay] = useState<string>()
   const [selectedSlot, setSelectedSlot] = useState<string>()
+  const [guestName, setGuestName] = useState('')
+  const queryClient = useQueryClient()
 
   const availability = useQuery({
     ...getAvailabilityOptions({ query: { meetingTypeId: selectedTypeId ?? '' } }),
     enabled: Boolean(selectedTypeId),
     retry: false
+  })
+
+  const refreshAvailability = async (meetingTypeId: string | undefined) => {
+    if (!meetingTypeId) return
+    await queryClient.invalidateQueries({
+      queryKey: getAvailabilityQueryKey({ query: { meetingTypeId } })
+    })
+  }
+
+  const create = useMutation({
+    ...createBookingMutation(),
+    retry: false,
+    onSuccess: async () => {
+      // Availability and the owner's upcoming list are refreshed from the server.
+      await Promise.all([
+        refreshAvailability(selectedTypeId),
+        queryClient.invalidateQueries({ queryKey: listUpcomingBookingsQueryKey() })
+      ])
+    },
+    onError: async (error) => {
+      // A stale or taken slot must disappear; the guest name and type are preserved.
+      if (['SLOT_CONFLICT', 'INVALID_SLOT'].includes(errorCode(error) ?? '')) {
+        setSelectedSlot(undefined)
+      }
+      await refreshAvailability(selectedTypeId)
+    }
   })
 
   const timeZone = guestTimeZone()
@@ -43,8 +132,8 @@ export function Book() {
 
   const activeDay = days.find((day) => day.key === selectedDay)
 
-  function chooseType(id: string) {
-    setSelectedTypeId(id)
+  function chooseType(type: MeetingType) {
+    setSelectedType(type)
     // A slot and a day belong to the availability of one type.
     setSelectedDay(undefined)
     setSelectedSlot(undefined)
@@ -166,9 +255,115 @@ export function Book() {
         </section>
       )}
 
-      <Button asChild variant="outline">
-        <Link to="/">На главную</Link>
-      </Button>
+      {create.data ? (
+        <Confirmation booking={create.data} timeZone={timeZone} />
+      ) : (
+        <>
+          {selectedTypeId && (
+            <section aria-labelledby="summary-heading" className="space-y-4 rounded-xl border p-6">
+              <h2 id="summary-heading" className="text-xl font-semibold">
+                Проверьте выбор
+              </h2>
+
+              {selectedSlot ? (
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <dt className="text-sm text-muted-foreground">Тип встречи</dt>
+                    <dd>{selectedType?.name}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm text-muted-foreground">Длительность</dt>
+                    <dd>{selectedType?.durationMinutes} мин.</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm text-muted-foreground">Начало</dt>
+                    <dd>{formatInstant(selectedSlot, timeZone)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-sm text-muted-foreground">Часовой пояс</dt>
+                    <dd>{timeZone}</dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="text-muted-foreground">
+                  Выберите свободное время выше, чтобы отправить запись.
+                </p>
+              )}
+
+              <form
+                className="space-y-4"
+                aria-label="Создание записи"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  if (!selectedTypeId || !selectedSlot || create.isPending) return
+                  const trimmed = guestName.trim()
+                  if (trimmed.length < 1 || trimmed.length > 100) return
+                  create.mutate({
+                    body: { meetingTypeId: selectedTypeId, start: selectedSlot, guestName: trimmed }
+                  })
+                }}
+              >
+                <div className="space-y-2">
+                  <label htmlFor="guest-name" className="block text-sm font-medium">
+                    Ваше имя
+                  </label>
+                  <input
+                    id="guest-name"
+                    name="guestName"
+                    value={guestName}
+                    onChange={(event) => setGuestName(event.target.value)}
+                    required
+                    className="w-full rounded-md border bg-background px-3 py-2 focus-visible:outline-2 focus-visible:outline-ring"
+                  />
+                  {guestName.trim().length === 0 && guestName.length > 0 && (
+                    <p className="text-sm text-destructive">Укажите имя.</p>
+                  )}
+                </div>
+                {selectedSlot && (
+                  <Button
+                    type="submit"
+                    disabled={
+                      create.isPending ||
+                      guestName.trim().length < 1 ||
+                      guestName.trim().length > 100
+                    }
+                  >
+                    Записаться
+                  </Button>
+                )}
+              </form>
+
+              {create.isPending && <p role="status">Сохраняем запись…</p>}
+
+              {create.isError && (
+                <div role="alert" className="space-y-2 rounded-xl border border-destructive/40 p-4">
+                  {errorCode(create.error) === 'SLOT_CONFLICT' ? (
+                    <p>
+                      Это время уже занято. Выберите другой свободный слот: доступность обновлена.
+                    </p>
+                  ) : errorCode(create.error) === 'INVALID_SLOT' ? (
+                    <p>
+                      Выбранное время больше недоступно. Выберите другой слот: доступность
+                      обновлена.
+                    </p>
+                  ) : errorCode(create.error) ? (
+                    <p>Не удалось создать запись. Проверьте данные и попробуйте ещё раз.</p>
+                  ) : (
+                    <p>
+                      Результат неизвестен: запись могла сохраниться до потери ответа. Проверьте
+                      свободное время, прежде чем отправлять форму снова.
+                    </p>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          <Button asChild variant="outline">
+            <Link to="/">На главную</Link>
+          </Button>
+        </>
+      )}
     </div>
   )
 }

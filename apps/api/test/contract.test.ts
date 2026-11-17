@@ -1,10 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
-import Fastify, {
-  type FastifyInstance,
-  type HTTPMethods
-} from 'fastify'
+import Fastify, { type FastifyInstance, type HTTPMethods } from 'fastify'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 import app from '../src/app.ts'
@@ -18,34 +15,28 @@ const spec = parse(readFileSync(specPath, 'utf8'))
 type JsonSchema = Record<string, unknown>
 
 type Operation = {
-  responses: Record<string, {
-    content?: Record<string, { schema?: JsonSchema }>
-  }>
+  responses: Record<
+    string,
+    {
+      content?: Record<string, { schema?: JsonSchema }>
+    }
+  >
 }
 
 type PathItem = Partial<Record<HttpMethod, Operation>>
 
-const httpMethods = [
-  'get',
-  'put',
-  'post',
-  'delete',
-  'options',
-  'head',
-  'patch',
-  'trace'
-] as const
+const httpMethods = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const
 
 type HttpMethod = (typeof httpMethods)[number]
 
 const paths = spec.paths as Record<string, PathItem>
 
 /** OpenAPI uses `{id}` for path parameters, Fastify uses `:id`. */
-function toFastifyUrl (openapiPath: string): string {
+function toFastifyUrl(openapiPath: string): string {
   return openapiPath.replace(/\{([^}]+)\}/g, ':$1')
 }
 
-function operations (): Array<{
+function operations(): Array<{
   method: HttpMethod
   path: string
   operation: Operation
@@ -60,7 +51,7 @@ function operations (): Array<{
 
 const instances: FastifyInstance[] = []
 
-async function build (): Promise<{
+async function build(): Promise<{
   instance: FastifyInstance
   routes: Array<{ method: HttpMethod; url: string }>
 }> {

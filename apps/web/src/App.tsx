@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getHealth } from '@calendar/sdk'
 import './App.css'
 
-function App () {
+function App() {
   const health = useQuery({
     queryKey: ['health'],
     queryFn: async () => {
@@ -16,15 +16,12 @@ function App () {
       <p className="eyebrow">Hexlet · AI for developers</p>
       <h1>Календарь звонков</h1>
       <p className="lead">
-        Каркас приложения: TypeSpec → OpenAPI → сгенерированный SDK → Fastify
-        API → React.
+        Каркас приложения: TypeSpec → OpenAPI → сгенерированный SDK → Fastify API → React.
       </p>
 
       <section className="card" aria-live="polite">
         <span
-          className={
-            health.isSuccess ? 'dot dot-ok' : health.isError ? 'dot dot-error' : 'dot'
-          }
+          className={health.isSuccess ? 'dot dot-ok' : health.isError ? 'dot dot-error' : 'dot'}
         />
         <div>
           <h2>Статус API</h2>

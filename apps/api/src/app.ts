@@ -2,10 +2,7 @@ import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import AutoLoad, { type AutoloadPluginOptions } from '@fastify/autoload'
 import { type FastifyPluginAsync } from 'fastify'
-import {
-  serializerCompiler,
-  validatorCompiler
-} from 'fastify-type-provider-zod'
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -15,13 +12,9 @@ export type AppOptions = {
 } & Partial<AutoloadPluginOptions>
 
 // Pass --options via CLI arguments in command to enable these options.
-const options: AppOptions = {
-}
+const options: AppOptions = {}
 
-const app: FastifyPluginAsync<AppOptions> = async (
-  fastify,
-  opts
-): Promise<void> => {
+const app: FastifyPluginAsync<AppOptions> = async (fastify, opts): Promise<void> => {
   // Zod schemas validate requests and serialize responses.
   fastify.setValidatorCompiler(validatorCompiler)
   fastify.setSerializerCompiler(serializerCompiler)

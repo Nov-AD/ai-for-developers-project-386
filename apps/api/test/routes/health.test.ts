@@ -4,7 +4,7 @@ import app from '../../src/app.ts'
 
 const instances: FastifyInstance[] = []
 
-async function build (): Promise<FastifyInstance> {
+async function build(): Promise<FastifyInstance> {
   const instance = Fastify()
   await instance.register(app)
   instances.push(instance)

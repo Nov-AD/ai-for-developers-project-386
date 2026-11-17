@@ -8,6 +8,6 @@ export default defineConfig({
     // Bind IPv4 loopback so pitchfork's readiness probe on 127.0.0.1:5173
     // succeeds, and fail instead of silently moving to another port.
     host: '127.0.0.1',
-    strictPort: true,
-  },
+    strictPort: true
+  }
 })

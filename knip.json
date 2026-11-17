@@ -15,7 +15,7 @@
     },
     "packages/contract": {
       "entry": [],
-      "ignoreDependencies": ["@typespec/http", "@typespec/openapi3"]
+      "ignoreDependencies": ["@typespec/http", "@typespec/openapi", "@typespec/openapi3"]
     }
   },
   "ignoreDependencies": ["@hey-api/client-fetch"],

@@ -21,7 +21,9 @@
     "dev": "tsc -p tsconfig.json --watch"
   },
   "dependencies": {
-    "@hey-api/client-fetch": "0.13.1"
+    "@hey-api/client-fetch": "0.13.1",
+    "@tanstack/react-query": "^5.107.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "0.99.0",

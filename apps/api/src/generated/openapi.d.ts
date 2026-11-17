@@ -4,6 +4,51 @@
  */
 
 export interface paths {
+    "/availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Compute current availability for the required meetingTypeId query parameter; no other parameters accepted. Use the service-wide owner schedule/window/overlap rules on every request. Missing/malformed UUID is 400; well-formed unknown UUID is 404. Empty availability is 200 with an empty slots array. */
+        get: operations["getAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bookings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Return all types' bookings whose end is strictly later than now, including calls already in progress; exclude calls ending exactly now. Recompute now per request. Sort by start ascending, then UUID ascending. Empty is 200 []. Display in Europe/Moscow with an explicit time zone. No query parameters. Refresh on owner page entry, focus and manual refresh; no polling required. */
+        get: operations["listUpcomingBookings"];
+        put?: never;
+        /**
+         * @description Revalidate the current type, window, schedule, future start and overlaps, atomically save
+         *     and return HTTP 201 with server-computed end and meeting type details. Validation is 400
+         *     VALIDATION_ERROR, then unknown type is 404 MEETING_TYPE_NOT_FOUND, then invalid schedule
+         *     selection is 400 INVALID_SLOT, then overlap is 409 SLOT_CONFLICT. No query parameters.
+         *     Only a saved response confirms success. Do not retry creating requests automatically.
+         *     If the network loses the response, creation may have succeeded: show an uncertain result,
+         *     refresh availability when connection returns and do not claim the booking is absent.
+         *     After success refresh availability/upcoming lists; after conflict preserve name/type and
+         *     refresh availability. There is no idempotency key or booking lookup/confirmation endpoint.
+         */
+        post: operations["createBooking"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -21,10 +66,117 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/meeting-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Return all meeting types in creation order, with UUID ascending as the stable tie-breaker. New types are visible immediately. The initial store is empty. No query parameters are accepted. */
+        get: operations["listMeetingTypes"];
+        put?: never;
+        /** @description Create a meeting type; trim name, validate all fields, then generate UUID. Omitted description becomes empty. No query parameters are accepted. HTTP 201 contains the complete saved type. */
+        post: operations["createMeetingType"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Availability for the requested meeting type. Slots sorted by start ascending; no duplicates. Empty slots is success, not a loading/network error.
+         * @example {
+         *       "ownerTimeZone": "Europe/Moscow",
+         *       "windowStartDate": "2026-11-18",
+         *       "windowEndDate": "2026-12-02",
+         *       "slots": []
+         *     }
+         */
+        Availability: {
+            /**
+             * @description Owner's fixed IANA zone, used for scheduling and window boundaries.
+             * @enum {string}
+             */
+            ownerTimeZone: "Europe/Moscow";
+            /** @description Inclusive first owner calendar date in the 14-day window. */
+            windowStartDate: components["schemas"]["OwnerDate"];
+            /** @description Exclusive date, exactly 14 calendar dates after windowStartDate. */
+            windowEndDate: components["schemas"]["OwnerDate"];
+            /** @description Only future intervals fully fitting the working hours and not overlapping any booking, across all meeting types. */
+            slots: components["schemas"]["Slot"][];
+        };
+        /**
+         * @description Saved booking and complete meeting type details for confirmation; confirmation is not a separately retrievable public resource.
+         * @example {
+         *       "id": "22222222-2222-4222-8222-222222222222",
+         *       "meetingType": {
+         *         "id": "11111111-1111-4111-8111-111111111111",
+         *         "name": "Introduction",
+         *         "description": "",
+         *         "durationMinutes": 45
+         *       },
+         *       "guestName": "Alex",
+         *       "start": "2026-11-18T06:00:00Z",
+         *       "end": "2026-11-18T06:45:00Z"
+         *     }
+         */
+        Booking: {
+            /** @description Server-generated booking UUID. */
+            id: components["schemas"]["Uuid"];
+            /** @description Referenced meeting type, including name and duration for the confirmation. */
+            meetingType: components["schemas"]["MeetingType"];
+            /** @description Trimmed guest name. */
+            guestName: components["schemas"]["TrimmedName"];
+            /** @description Saved start in UTC. */
+            start: components["schemas"]["UtcInstant"];
+            /** @description Exclusive end in UTC, computed by the server. */
+            end: components["schemas"]["UtcInstant"];
+        };
+        /**
+         * @description Creation accepts only the type reference, selected UTC start and guest name. End, duration and booking UUID cannot be supplied.
+         * @example {
+         *       "meetingTypeId": "11111111-1111-4111-8111-111111111111",
+         *       "start": "2026-11-18T06:00:00Z",
+         *       "guestName": " Alex "
+         *     }
+         */
+        CreateBookingInput: {
+            /** @description Existing meeting type reference. */
+            meetingTypeId: components["schemas"]["Uuid"];
+            /** @description Selected start. Revalidated against the current schedule/window/now before saving. */
+            start: components["schemas"]["UtcInstant"];
+            /** @description Guest name, trimmed before validation and storage. No email, phone or comment is collected. */
+            guestName: components["schemas"]["NameInput"];
+        };
+        /**
+         * @description Only these fields are accepted. Trim name before validating its length; do not strip unknown properties.
+         * @example {
+         *       "name": " Introduction ",
+         *       "durationMinutes": 45
+         *     }
+         */
+        CreateMeetingTypeInput: {
+            /** @description Meeting type name; validated after trimming. */
+            name: components["schemas"]["NameInput"];
+            /**
+             * @description Optional description; defaults to the empty string.
+             * @default
+             */
+            description: components["schemas"]["MeetingDescription"];
+            /** @description Integer duration, 1–540 minutes inclusive. */
+            durationMinutes: components["schemas"]["DurationMinutes"];
+        };
+        /**
+         * Format: int32
+         * @description Integer duration in minutes; need not be a multiple of the 30-minute start grid.
+         * @example 45
+         */
+        DurationMinutes: number;
         /** @description Health check response. */
         HealthResponse: {
             /**
@@ -32,6 +184,156 @@ export interface components {
              * @enum {string}
              */
             status: "ok";
+        };
+        /**
+         * @description Selection is stale or violates the schedule: outside current window, weekend, off-grid, outside hours, or start <= now. Refresh availability and clear invalid selection; preserve guest name/type.
+         * @example {
+         *       "code": "INVALID_SLOT",
+         *       "message": "The selected start is no longer in the booking window."
+         *     }
+         */
+        InvalidSlotError: {
+            /**
+             * @description Machine code; interpreted together with the documented HTTP status.
+             * @enum {string}
+             */
+            code: "INVALID_SLOT";
+            /** @description Human-readable explanation. */
+            message: string;
+            /** @description Optional input errors; use body/query field names (including unknown keys). */
+            fieldErrors?: {
+                [key: string]: string[];
+            };
+        };
+        /**
+         * @description Description, at most 2000 characters; empty is allowed. Preserved as supplied, not trimmed.
+         * @example
+         */
+        MeetingDescription: string;
+        /**
+         * @description Full meeting type. UUID is generated by the server; types cannot be edited or deleted.
+         * @example {
+         *       "id": "11111111-1111-4111-8111-111111111111",
+         *       "name": "Introduction",
+         *       "description": "",
+         *       "durationMinutes": 45
+         *     }
+         */
+        MeetingType: {
+            /** @description Server-generated identifier. */
+            id: components["schemas"]["Uuid"];
+            /** @description Trimmed meeting type name. */
+            name: components["schemas"]["TrimmedName"];
+            /** @description Meeting purpose; empty when omitted during creation. */
+            description: components["schemas"]["MeetingDescription"];
+            /** @description Length of each slot of this type. */
+            durationMinutes: components["schemas"]["DurationMinutes"];
+        };
+        /**
+         * @description Well-formed UUID does not identify an existing meeting type.
+         * @example {
+         *       "code": "MEETING_TYPE_NOT_FOUND",
+         *       "message": "Meeting type not found."
+         *     }
+         */
+        MeetingTypeNotFoundError: {
+            /**
+             * @description Machine code; interpreted together with the documented HTTP status.
+             * @enum {string}
+             */
+            code: "MEETING_TYPE_NOT_FOUND";
+            /** @description Human-readable explanation. */
+            message: string;
+            /** @description Optional input errors; use body/query field names (including unknown keys). */
+            fieldErrors?: {
+                [key: string]: string[];
+            };
+        };
+        /**
+         * @description Raw name input. Leading/trailing whitespace is allowed; after trimming it must contain 1–100 characters. The pattern encodes that post-trim limit, rather than incorrectly limiting raw length.
+         * @example Introduction
+         */
+        NameInput: string;
+        /**
+         * Format: date
+         * @description Calendar date YYYY-MM-DD in the owner's Europe/Moscow time zone, not a UTC instant.
+         * @example 2026-11-18
+         */
+        OwnerDate: string;
+        /**
+         * @description Available half-open interval; end equals start plus the selected meeting type's duration.
+         * @example {
+         *       "start": "2026-11-18T06:00:00Z",
+         *       "end": "2026-11-18T06:45:00Z"
+         *     }
+         */
+        Slot: {
+            /** @description Future start on the owner's 30-minute grid. */
+            start: components["schemas"]["UtcInstant"];
+            /** @description Exclusive end, at or before 18:00 on the same owner working date. */
+            end: components["schemas"]["UtcInstant"];
+        };
+        /**
+         * @description Another booking overlaps this interval, including one concurrently created for a different type. Clear slot, preserve name/type and refresh availability; do not show confirmation.
+         * @example {
+         *       "code": "SLOT_CONFLICT",
+         *       "message": "This slot has been taken. Please choose another."
+         *     }
+         */
+        SlotConflictError: {
+            /**
+             * @description Machine code; interpreted together with the documented HTTP status.
+             * @enum {string}
+             */
+            code: "SLOT_CONFLICT";
+            /** @description Human-readable explanation. */
+            message: string;
+            /** @description Optional input errors; use body/query field names (including unknown keys). */
+            fieldErrors?: {
+                [key: string]: string[];
+            };
+        };
+        /**
+         * @description Name after trimming leading/trailing whitespace: 1–100 characters, never whitespace-only. Stored and returned trimmed.
+         * @example Introduction
+         */
+        TrimmedName: string;
+        /**
+         * Format: date-time
+         * @description RFC 3339 instant in UTC, with seconds and optional fractional seconds, ending in Z; offsets are not accepted.
+         * @example 2026-11-18T06:00:00Z
+         */
+        UtcInstant: string;
+        /**
+         * Format: uuid
+         * @description Server-generated UUID or a UUID reference. Malformed values are a validation error.
+         * @example 11111111-1111-4111-8111-111111111111
+         */
+        Uuid: string;
+        /**
+         * @description Malformed JSON/UUID/UTC instant, missing or invalid fields, unknown body fields/query parameters, or unsupported request shape.
+         * @example {
+         *       "code": "VALIDATION_ERROR",
+         *       "message": "Invalid input.",
+         *       "fieldErrors": {
+         *         "name": [
+         *           "Enter a name."
+         *         ]
+         *       }
+         *     }
+         */
+        ValidationError: {
+            /**
+             * @description Machine code; interpreted together with the documented HTTP status.
+             * @enum {string}
+             */
+            code: "VALIDATION_ERROR";
+            /** @description Human-readable explanation. */
+            message: string;
+            /** @description Optional input errors; use body/query field names (including unknown keys). */
+            fieldErrors?: {
+                [key: string]: string[];
+            };
         };
     };
     responses: never;
@@ -42,6 +344,198 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getAvailability: {
+        parameters: {
+            query: {
+                /** @description Required UUID of the selected meeting type. */
+                meetingTypeId: components["schemas"]["Uuid"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "ownerTimeZone": "Europe/Moscow",
+                     *       "windowStartDate": "2026-11-18",
+                     *       "windowEndDate": "2026-12-02",
+                     *       "slots": [
+                     *         {
+                     *           "start": "2026-11-18T06:00:00Z",
+                     *           "end": "2026-11-18T06:45:00Z"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Availability"];
+                };
+            };
+            /** @description Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "VALIDATION_ERROR",
+                     *       "message": "Invalid meeting type identifier."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+            /** @description Requested meeting type does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "MEETING_TYPE_NOT_FOUND",
+                     *       "message": "Meeting type not found."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MeetingTypeNotFoundError"];
+                };
+            };
+        };
+    };
+    listUpcomingBookings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Booking"][];
+                };
+            };
+            /** @description Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "VALIDATION_ERROR",
+                     *       "message": "Unknown query parameter."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+        };
+    };
+    createBooking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Selected meeting type/start and guest name; no server-owned fields. */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "meetingTypeId": "11111111-1111-4111-8111-111111111111",
+                 *       "start": "2026-11-18T06:00:00Z",
+                 *       "guestName": " Alex "
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateBookingInput"];
+            };
+        };
+        responses: {
+            /** @description Resource successfully saved. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "22222222-2222-4222-8222-222222222222",
+                     *       "meetingType": {
+                     *         "id": "11111111-1111-4111-8111-111111111111",
+                     *         "name": "Introduction",
+                     *         "description": "",
+                     *         "durationMinutes": 45
+                     *       },
+                     *       "guestName": "Alex",
+                     *       "start": "2026-11-18T06:00:00Z",
+                     *       "end": "2026-11-18T06:45:00Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Booking"];
+                };
+            };
+            /** @description Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "INVALID_SLOT",
+                     *       "message": "The selected start is no longer in the booking window."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ValidationError"] | components["schemas"]["InvalidSlotError"];
+                };
+            };
+            /** @description Requested meeting type does not exist. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "MEETING_TYPE_NOT_FOUND",
+                     *       "message": "Meeting type not found."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MeetingTypeNotFoundError"];
+                };
+            };
+            /** @description Selected interval overlaps an existing booking. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "SLOT_CONFLICT",
+                     *       "message": "This slot has been taken. Please choose another."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SlotConflictError"];
+                };
+            };
+        };
+    };
     getHealth: {
         parameters: {
             query?: never;
@@ -57,7 +551,101 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "status": "ok"
+                     *     }
+                     */
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    listMeetingTypes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request has succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeetingType"][];
+                };
+            };
+            /** @description Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "VALIDATION_ERROR",
+                     *       "message": "Unknown query parameter."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+        };
+    };
+    createMeetingType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Meeting type fields to validate and save. */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "name": " Introduction ",
+                 *       "durationMinutes": 45
+                 *     }
+                 */
+                "application/json": components["schemas"]["CreateMeetingTypeInput"];
+            };
+        };
+        responses: {
+            /** @description Resource successfully saved. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "11111111-1111-4111-8111-111111111111",
+                     *       "name": "Introduction",
+                     *       "description": "",
+                     *       "durationMinutes": 45
+                     *     }
+                     */
+                    "application/json": components["schemas"]["MeetingType"];
+                };
+            };
+            /** @description Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "code": "VALIDATION_ERROR",
+                     *       "message": "Invalid meeting type."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ValidationError"];
                 };
             };
         };

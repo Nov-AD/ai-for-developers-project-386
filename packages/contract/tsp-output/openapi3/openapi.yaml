@@ -1,10 +1,341 @@
 openapi: 3.1.0
 info:
   title: Call scheduling API
-  description: API for scheduling calls with a single calendar owner.
+  description: |-
+    API for scheduling calls with one predefined owner; no authentication or multiple owners.
+    Data belongs to one application instance, is stored only in process memory and disappears
+    on restart. Do not use real personal data: the owner section and API are public.
+
+    The owner works Monday–Friday, 09:00–18:00 in Europe/Moscow, without holidays or exceptions.
+    BOOKING_WINDOW_START is a startup setting: today or tomorrow, default tomorrow; other
+    values fail startup with a clear error. For every availability/booking request, recompute
+    now and the owner's local date. The window contains exactly 14 consecutive calendar dates
+    from that date (or tomorrow), inclusive start and exclusive end; weekends do not extend it.
+    Compute calendar boundaries in Europe/Moscow, not by adding fixed 24-hour periods.
+
+    Slot starts are on the 30-minute grid from 09:00 owner time, strictly later than now.
+    The end is computed by the server from the meeting type duration, must be within 18:00
+    on the same working date, and is not required to be on the grid. Intervals are half-open
+    [start, end): overlap iff a.start < b.end and a.end > b.start; adjacent intervals are allowed.
+    All bookings of all meeting types block the owner. Revalidate the type, window, weekday,
+    hours, grid and future start at creation; availability is not a reservation. Checking
+    overlap and saving are one atomic repository operation, without an asynchronous gap.
+    Concurrent overlapping requests produce exactly one 201 and the remaining 409 responses.
+    Nonoverlapping and adjacent requests can all succeed. Multiple processes are unsupported.
+
+    All instants are RFC 3339 UTC strings ending in Z. Guests display the full date and time
+    in the browser's IANA time zone (fallback Europe/Moscow), without trimming or extending
+    the owner's window. Owners display bookings in Europe/Moscow with an explicit zone label.
+    All scheduling input is validated by the server. Scheduling operations reject unknown
+    query parameters and unknown body fields, not silently strip them. Body endpoints require
+    application/json; malformed JSON or unsupported request format is 400 VALIDATION_ERROR.
+    The existing health check keeps its original behavior.
+
+    The x-contract-scenarios operation extension contains named HTTP examples: request query/body,
+    expected status and response body. requestValid=false identifies deliberately invalid
+    requests; all other examples must satisfy the generated request schemas. These examples
+    are validated against the generated OpenAPI and can be reused as frontend HTTP fixtures.
   version: 0.0.0
-tags: []
+tags:
+  - name: Calendar
 paths:
+  /availability:
+    get:
+      operationId: getAvailability
+      description: Compute current availability for the required meetingTypeId query parameter; no other parameters accepted. Use the service-wide owner schedule/window/overlap rules on every request. Missing/malformed UUID is 400; well-formed unknown UUID is 404. Empty availability is 200 with an empty slots array.
+      parameters:
+        - name: meetingTypeId
+          in: query
+          required: true
+          description: Required UUID of the selected meeting type.
+          schema:
+            $ref: '#/components/schemas/Uuid'
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Availability'
+              example:
+                ownerTimeZone: Europe/Moscow
+                windowStartDate: '2026-11-18'
+                windowEndDate: '2026-12-02'
+                slots:
+                  - start: '2026-11-18T06:00:00Z'
+                    end: '2026-11-18T06:45:00Z'
+        '400':
+          description: Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                code: VALIDATION_ERROR
+                message: Invalid meeting type identifier.
+        '404':
+          description: Requested meeting type does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingTypeNotFoundError'
+              example:
+                code: MEETING_TYPE_NOT_FOUND
+                message: Meeting type not found.
+      tags:
+        - Calendar
+      x-contract-scenarios:
+        - name: available
+          request:
+            query:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+          status: 200
+          body:
+            ownerTimeZone: Europe/Moscow
+            windowStartDate: '2026-11-18'
+            windowEndDate: '2026-12-02'
+            slots:
+              - start: '2026-11-18T06:00:00Z'
+                end: '2026-11-18T06:45:00Z'
+        - name: empty
+          request:
+            query:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+          status: 200
+          body:
+            ownerTimeZone: Europe/Moscow
+            windowStartDate: '2026-11-18'
+            windowEndDate: '2026-12-02'
+            slots: []
+        - name: missing-type
+          request:
+            query: {}
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: meetingTypeId is required.
+            fieldErrors:
+              meetingTypeId:
+                - Required.
+        - name: malformed-type
+          request:
+            query:
+              meetingTypeId: not-a-uuid
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: Invalid meeting type identifier.
+        - name: unknown-type
+          request:
+            query:
+              meetingTypeId: 99999999-9999-4999-8999-999999999999
+          status: 404
+          body:
+            code: MEETING_TYPE_NOT_FOUND
+            message: Meeting type not found.
+  /bookings:
+    post:
+      operationId: createBooking
+      description: |-
+        Revalidate the current type, window, schedule, future start and overlaps, atomically save
+        and return HTTP 201 with server-computed end and meeting type details. Validation is 400
+        VALIDATION_ERROR, then unknown type is 404 MEETING_TYPE_NOT_FOUND, then invalid schedule
+        selection is 400 INVALID_SLOT, then overlap is 409 SLOT_CONFLICT. No query parameters.
+        Only a saved response confirms success. Do not retry creating requests automatically.
+        If the network loses the response, creation may have succeeded: show an uncertain result,
+        refresh availability when connection returns and do not claim the booking is absent.
+        After success refresh availability/upcoming lists; after conflict preserve name/type and
+        refresh availability. There is no idempotency key or booking lookup/confirmation endpoint.
+      parameters: []
+      responses:
+        '201':
+          description: Resource successfully saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+              example:
+                id: 22222222-2222-4222-8222-222222222222
+                meetingType:
+                  id: 11111111-1111-4111-8111-111111111111
+                  name: Introduction
+                  description: ''
+                  durationMinutes: 45
+                guestName: Alex
+                start: '2026-11-18T06:00:00Z'
+                end: '2026-11-18T06:45:00Z'
+        '400':
+          description: Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: '#/components/schemas/ValidationError'
+                  - $ref: '#/components/schemas/InvalidSlotError'
+              example:
+                code: INVALID_SLOT
+                message: The selected start is no longer in the booking window.
+        '404':
+          description: Requested meeting type does not exist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingTypeNotFoundError'
+              example:
+                code: MEETING_TYPE_NOT_FOUND
+                message: Meeting type not found.
+        '409':
+          description: Selected interval overlaps an existing booking.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SlotConflictError'
+              example:
+                code: SLOT_CONFLICT
+                message: This slot has been taken. Please choose another.
+      tags:
+        - Calendar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingInput'
+            example:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+              start: '2026-11-18T06:00:00Z'
+              guestName: ' Alex '
+        description: Selected meeting type/start and guest name; no server-owned fields.
+      x-contract-scenarios:
+        - name: created
+          request:
+            body:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+              start: '2026-11-18T06:00:00Z'
+              guestName: ' Alex '
+          status: 201
+          body:
+            id: 22222222-2222-4222-8222-222222222222
+            meetingType:
+              id: 11111111-1111-4111-8111-111111111111
+              name: Introduction
+              description: ''
+              durationMinutes: 45
+            guestName: Alex
+            start: '2026-11-18T06:00:00Z'
+            end: '2026-11-18T06:45:00Z'
+        - name: invalid-name
+          request:
+            body:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+              start: '2026-11-18T06:00:00Z'
+              guestName: ''
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: Invalid guest name.
+            fieldErrors:
+              guestName:
+                - Enter a name.
+        - name: stale-selection
+          request:
+            body:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+              start: '2026-11-18T06:00:00Z'
+              guestName: ' Alex '
+          status: 400
+          body:
+            code: INVALID_SLOT
+            message: The selected start is no longer in the booking window.
+        - name: unknown-type
+          request:
+            body:
+              meetingTypeId: 99999999-9999-4999-8999-999999999999
+              start: '2026-11-18T06:00:00Z'
+              guestName: Alex
+          status: 404
+          body:
+            code: MEETING_TYPE_NOT_FOUND
+            message: Meeting type not found.
+        - name: occupied
+          request:
+            body:
+              meetingTypeId: 11111111-1111-4111-8111-111111111111
+              start: '2026-11-18T06:00:00Z'
+              guestName: ' Alex '
+          status: 409
+          body:
+            code: SLOT_CONFLICT
+            message: This slot has been taken. Please choose another.
+    get:
+      operationId: listUpcomingBookings
+      description: Return all types' bookings whose end is strictly later than now, including calls already in progress; exclude calls ending exactly now. Recompute now per request. Sort by start ascending, then UUID ascending. Empty is 200 []. Display in Europe/Moscow with an explicit time zone. No query parameters. Refresh on owner page entry, focus and manual refresh; no polling required.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Booking'
+              examples:
+                Upcoming and ongoing calls:
+                  summary: Upcoming and ongoing calls
+                  value:
+                    - id: 22222222-2222-4222-8222-222222222222
+                      meetingType:
+                        id: 11111111-1111-4111-8111-111111111111
+                        name: Introduction
+                        description: ''
+                        durationMinutes: 45
+                      guestName: Alex
+                      start: '2026-11-18T06:00:00Z'
+                      end: '2026-11-18T06:45:00Z'
+                Empty list:
+                  summary: Empty list
+                  value: []
+        '400':
+          description: Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                code: VALIDATION_ERROR
+                message: Unknown query parameter.
+      tags:
+        - Calendar
+      x-contract-scenarios:
+        - name: empty
+          status: 200
+          body: []
+        - name: populated
+          status: 200
+          body:
+            - id: 22222222-2222-4222-8222-222222222222
+              meetingType:
+                id: 11111111-1111-4111-8111-111111111111
+                name: Introduction
+                description: ''
+                durationMinutes: 45
+              guestName: Alex
+              start: '2026-11-18T06:00:00Z'
+              end: '2026-11-18T06:45:00Z'
+        - name: unknown-query
+          request:
+            query:
+              extra: x
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: 'Unknown query parameter: extra.'
   /health:
     get:
       operationId: getHealth
@@ -17,8 +348,270 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+      tags:
+        - Calendar
+      x-contract-scenarios:
+        - name: healthy
+          status: 200
+          body:
+            status: ok
+  /meeting-types:
+    get:
+      operationId: listMeetingTypes
+      description: Return all meeting types in creation order, with UUID ascending as the stable tie-breaker. New types are visible immediately. The initial store is empty. No query parameters are accepted.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MeetingType'
+              examples:
+                Created types:
+                  summary: Created types
+                  value:
+                    - id: 11111111-1111-4111-8111-111111111111
+                      name: Introduction
+                      description: ''
+                      durationMinutes: 45
+                Empty list:
+                  summary: Empty list
+                  value: []
+        '400':
+          description: Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                code: VALIDATION_ERROR
+                message: Unknown query parameter.
+      tags:
+        - Calendar
+      x-contract-scenarios:
+        - name: empty
+          status: 200
+          body: []
+        - name: populated
+          status: 200
+          body:
+            - id: 11111111-1111-4111-8111-111111111111
+              name: Introduction
+              description: ''
+              durationMinutes: 45
+        - name: unknown-query
+          request:
+            query:
+              extra: x
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: 'Unknown query parameter: extra.'
+            fieldErrors:
+              extra:
+                - Unknown parameter.
+    post:
+      operationId: createMeetingType
+      description: Create a meeting type; trim name, validate all fields, then generate UUID. Omitted description becomes empty. No query parameters are accepted. HTTP 201 contains the complete saved type.
+      parameters: []
+      responses:
+        '201':
+          description: Resource successfully saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeetingType'
+              example:
+                id: 11111111-1111-4111-8111-111111111111
+                name: Introduction
+                description: ''
+                durationMinutes: 45
+        '400':
+          description: Input rejected; VALIDATION_ERROR is field/format validation, INVALID_SLOT is an invalid or stale schedule selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+              example:
+                code: VALIDATION_ERROR
+                message: Invalid meeting type.
+      tags:
+        - Calendar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMeetingTypeInput'
+            example:
+              name: ' Introduction '
+              durationMinutes: 45
+        description: Meeting type fields to validate and save.
+      x-contract-scenarios:
+        - name: created
+          request:
+            body:
+              name: ' Introduction '
+              durationMinutes: 45
+          status: 201
+          body:
+            id: 11111111-1111-4111-8111-111111111111
+            name: Introduction
+            description: ''
+            durationMinutes: 45
+        - name: invalid-duration
+          request:
+            body:
+              name: Introduction
+              durationMinutes: 0
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: Invalid meeting type.
+            fieldErrors:
+              durationMinutes:
+                - Must be an integer from 1 to 540.
+        - name: unknown-field
+          request:
+            body:
+              name: Introduction
+              durationMinutes: 45
+              extra: true
+          requestValid: false
+          status: 400
+          body:
+            code: VALIDATION_ERROR
+            message: 'Unknown field: extra.'
+            fieldErrors:
+              extra:
+                - Unknown field.
 components:
   schemas:
+    Availability:
+      type: object
+      required:
+        - ownerTimeZone
+        - windowStartDate
+        - windowEndDate
+        - slots
+      properties:
+        ownerTimeZone:
+          type: string
+          enum:
+            - Europe/Moscow
+          description: Owner's fixed IANA zone, used for scheduling and window boundaries.
+        windowStartDate:
+          $ref: '#/components/schemas/OwnerDate'
+          description: Inclusive first owner calendar date in the 14-day window.
+        windowEndDate:
+          $ref: '#/components/schemas/OwnerDate'
+          description: Exclusive date, exactly 14 calendar dates after windowStartDate.
+        slots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Slot'
+          description: Only future intervals fully fitting the working hours and not overlapping any booking, across all meeting types.
+      description: Availability for the requested meeting type. Slots sorted by start ascending; no duplicates. Empty slots is success, not a loading/network error.
+      examples:
+        - ownerTimeZone: Europe/Moscow
+          windowStartDate: '2026-11-18'
+          windowEndDate: '2026-12-02'
+          slots: []
+    Booking:
+      type: object
+      required:
+        - id
+        - meetingType
+        - guestName
+        - start
+        - end
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+          description: Server-generated booking UUID.
+        meetingType:
+          $ref: '#/components/schemas/MeetingType'
+          description: Referenced meeting type, including name and duration for the confirmation.
+        guestName:
+          $ref: '#/components/schemas/TrimmedName'
+          description: Trimmed guest name.
+        start:
+          $ref: '#/components/schemas/UtcInstant'
+          description: Saved start in UTC.
+        end:
+          $ref: '#/components/schemas/UtcInstant'
+          description: Exclusive end in UTC, computed by the server.
+      description: Saved booking and complete meeting type details for confirmation; confirmation is not a separately retrievable public resource.
+      examples:
+        - id: 22222222-2222-4222-8222-222222222222
+          meetingType:
+            id: 11111111-1111-4111-8111-111111111111
+            name: Introduction
+            description: ''
+            durationMinutes: 45
+          guestName: Alex
+          start: '2026-11-18T06:00:00Z'
+          end: '2026-11-18T06:45:00Z'
+    CreateBookingInput:
+      type: object
+      required:
+        - meetingTypeId
+        - start
+        - guestName
+      properties:
+        meetingTypeId:
+          $ref: '#/components/schemas/Uuid'
+          description: Existing meeting type reference.
+        start:
+          $ref: '#/components/schemas/UtcInstant'
+          description: Selected start. Revalidated against the current schedule/window/now before saving.
+        guestName:
+          $ref: '#/components/schemas/NameInput'
+          description: Guest name, trimmed before validation and storage. No email, phone or comment is collected.
+      unevaluatedProperties:
+        not: {}
+      description: Creation accepts only the type reference, selected UTC start and guest name. End, duration and booking UUID cannot be supplied.
+      examples:
+        - meetingTypeId: 11111111-1111-4111-8111-111111111111
+          start: '2026-11-18T06:00:00Z'
+          guestName: ' Alex '
+    CreateMeetingTypeInput:
+      type: object
+      required:
+        - name
+        - durationMinutes
+      properties:
+        name:
+          $ref: '#/components/schemas/NameInput'
+          description: Meeting type name; validated after trimming.
+        description:
+          $ref: '#/components/schemas/MeetingDescription'
+          description: Optional description; defaults to the empty string.
+          default: ''
+        durationMinutes:
+          $ref: '#/components/schemas/DurationMinutes'
+          description: Integer duration, 1–540 minutes inclusive.
+      unevaluatedProperties:
+        not: {}
+      description: Only these fields are accepted. Trim name before validating its length; do not strip unknown properties.
+      examples:
+        - name: ' Introduction '
+          durationMinutes: 45
+    DurationMinutes:
+      type: integer
+      format: int32
+      minimum: 1
+      maximum: 540
+      description: Integer duration in minutes; need not be a multiple of the 30-minute start grid.
+      examples:
+        - 45
     HealthResponse:
       type: object
       required:
@@ -30,6 +623,206 @@ components:
             - ok
           description: Service status.
       description: Health check response.
+    InvalidSlotError:
+      type: object
+      allOf:
+        - type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - INVALID_SLOT
+              description: Machine code; interpreted together with the documented HTTP status.
+            message:
+              type: string
+              minLength: 1
+              description: Human-readable explanation.
+            fieldErrors:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: Optional input errors; use body/query field names (including unknown keys).
+          description: Unified error envelope. Code is stable and machine-readable; message is human-readable. Field errors are optional arrays keyed by input field/parameter name.
+      description: 'Selection is stale or violates the schedule: outside current window, weekend, off-grid, outside hours, or start <= now. Refresh availability and clear invalid selection; preserve guest name/type.'
+      examples:
+        - code: INVALID_SLOT
+          message: The selected start is no longer in the booking window.
+    MeetingDescription:
+      type: string
+      maxLength: 2000
+      description: Description, at most 2000 characters; empty is allowed. Preserved as supplied, not trimmed.
+      examples:
+        - ''
+    MeetingType:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - durationMinutes
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+          description: Server-generated identifier.
+        name:
+          $ref: '#/components/schemas/TrimmedName'
+          description: Trimmed meeting type name.
+        description:
+          $ref: '#/components/schemas/MeetingDescription'
+          description: Meeting purpose; empty when omitted during creation.
+        durationMinutes:
+          $ref: '#/components/schemas/DurationMinutes'
+          description: Length of each slot of this type.
+      description: Full meeting type. UUID is generated by the server; types cannot be edited or deleted.
+      examples:
+        - id: 11111111-1111-4111-8111-111111111111
+          name: Introduction
+          description: ''
+          durationMinutes: 45
+    MeetingTypeNotFoundError:
+      type: object
+      allOf:
+        - type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - MEETING_TYPE_NOT_FOUND
+              description: Machine code; interpreted together with the documented HTTP status.
+            message:
+              type: string
+              minLength: 1
+              description: Human-readable explanation.
+            fieldErrors:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: Optional input errors; use body/query field names (including unknown keys).
+          description: Unified error envelope. Code is stable and machine-readable; message is human-readable. Field errors are optional arrays keyed by input field/parameter name.
+      description: Well-formed UUID does not identify an existing meeting type.
+      examples:
+        - code: MEETING_TYPE_NOT_FOUND
+          message: Meeting type not found.
+    NameInput:
+      type: string
+      pattern: ^\s*\S(?:[\s\S]{0,98}\S)?\s*$
+      description: Raw name input. Leading/trailing whitespace is allowed; after trimming it must contain 1–100 characters. The pattern encodes that post-trim limit, rather than incorrectly limiting raw length.
+      examples:
+        - ' Introduction '
+    OwnerDate:
+      type: string
+      format: date
+      description: Calendar date YYYY-MM-DD in the owner's Europe/Moscow time zone, not a UTC instant.
+      examples:
+        - '2026-11-18'
+    Slot:
+      type: object
+      required:
+        - start
+        - end
+      properties:
+        start:
+          $ref: '#/components/schemas/UtcInstant'
+          description: Future start on the owner's 30-minute grid.
+        end:
+          $ref: '#/components/schemas/UtcInstant'
+          description: Exclusive end, at or before 18:00 on the same owner working date.
+      description: Available half-open interval; end equals start plus the selected meeting type's duration.
+      examples:
+        - start: '2026-11-18T06:00:00Z'
+          end: '2026-11-18T06:45:00Z'
+    SlotConflictError:
+      type: object
+      allOf:
+        - type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - SLOT_CONFLICT
+              description: Machine code; interpreted together with the documented HTTP status.
+            message:
+              type: string
+              minLength: 1
+              description: Human-readable explanation.
+            fieldErrors:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: Optional input errors; use body/query field names (including unknown keys).
+          description: Unified error envelope. Code is stable and machine-readable; message is human-readable. Field errors are optional arrays keyed by input field/parameter name.
+      description: Another booking overlaps this interval, including one concurrently created for a different type. Clear slot, preserve name/type and refresh availability; do not show confirmation.
+      examples:
+        - code: SLOT_CONFLICT
+          message: This slot has been taken. Please choose another.
+    TrimmedName:
+      type: string
+      minLength: 1
+      maxLength: 100
+      pattern: ^\S(?:[\s\S]*\S)?$
+      description: 'Name after trimming leading/trailing whitespace: 1–100 characters, never whitespace-only. Stored and returned trimmed.'
+      examples:
+        - Introduction
+    UtcInstant:
+      type: string
+      pattern: ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$
+      format: date-time
+      description: RFC 3339 instant in UTC, with seconds and optional fractional seconds, ending in Z; offsets are not accepted.
+      examples:
+        - '2026-11-18T06:00:00Z'
+    Uuid:
+      type: string
+      format: uuid
+      description: Server-generated UUID or a UUID reference. Malformed values are a validation error.
+      examples:
+        - 11111111-1111-4111-8111-111111111111
+    ValidationError:
+      type: object
+      allOf:
+        - type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - VALIDATION_ERROR
+              description: Machine code; interpreted together with the documented HTTP status.
+            message:
+              type: string
+              minLength: 1
+              description: Human-readable explanation.
+            fieldErrors:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: Optional input errors; use body/query field names (including unknown keys).
+          description: Unified error envelope. Code is stable and machine-readable; message is human-readable. Field errors are optional arrays keyed by input field/parameter name.
+      description: Malformed JSON/UUID/UTC instant, missing or invalid fields, unknown body fields/query parameters, or unsupported request shape.
+      examples:
+        - code: VALIDATION_ERROR
+          message: Invalid input.
+          fieldErrors:
+            name:
+              - Enter a name.
 servers:
   - url: http://localhost:3000
     description: Local development

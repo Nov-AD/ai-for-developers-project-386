@@ -18,6 +18,25 @@ test('владелец создаёт тип встречи, гость запи
   const guestName = 'Анна Тестовая'
   const otherGuestName = 'Борис Тестовый'
 
+  await test.step('на телефоне предупреждение компактно, а подробности доступны с клавиатуры', async () => {
+    await owner.setViewportSize({ width: 320, height: 740 })
+    await owner.goto('/owner')
+    const warning = owner.getByRole('complementary', { name: 'Ограничения учебного приложения' })
+    await expect(warning).toContainText('Данные публичны и сбрасываются при перезапуске.')
+    const details = warning.getByText(/Раздел не защищён авторизацией/)
+    await expect(details).not.toBeVisible()
+    expect((await warning.boundingBox())!.height).toBeLessThanOrEqual(200)
+    await expect(owner.getByRole('heading', { name: 'Новый тип встречи' })).toBeInViewport()
+    const summary = warning.locator('summary')
+    await summary.focus()
+    await owner.keyboard.press('Enter')
+    await expect(details).toBeVisible()
+    await expect(warning.getByText(/Работа в нескольких процессах не поддерживается/)).toBeVisible()
+    await owner.keyboard.press('Enter')
+    await expect(details).not.toBeVisible()
+    await owner.setViewportSize({ width: 1280, height: 720 })
+  })
+
   await test.step('владелец создаёт тип встречи через форму', async () => {
     await owner.goto('/owner')
     await expect(owner.getByText('Предстоящих записей нет.', { exact: true })).toBeVisible()
@@ -40,6 +59,23 @@ test('владелец создаёт тип встречи, гость запи
     ] as const) {
       await page.goto('/book')
       await page.getByRole('radio', { name: meetingName, exact: true }).check()
+      if (page === guest) {
+        const dates = page.getByRole('list', { name: 'Даты встречи' })
+        await expect(dates.getByRole('button')).toHaveCount(14)
+        for (const width of [320, 390]) {
+          await page.setViewportSize({ width, height: 844 })
+          // All two weeks fit in two rows, without horizontal page scrolling.
+          expect((await dates.boundingBox())!.height).toBeLessThanOrEqual(120)
+          expect(
+            await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+          ).toBe(true)
+        }
+        const lastDay = dates.getByRole('button', { name: /\d+ слотов$/ }).last()
+        await lastDay.focus()
+        await page.keyboard.press('Enter')
+        await expect(lastDay).toHaveAttribute('aria-pressed', 'true')
+        await expect(page.getByRole('group', { name: 'Выберите время', exact: true })).toBeVisible()
+      }
       // Use the second available day in the real window, so crossing midnight
       // during the test cannot push the chosen date out of a tomorrow-based window.
       await page

@@ -143,7 +143,7 @@ mise run check
 
 - `mise run contract:breaking` — oasdiff сравнивает OpenAPI с базовой ветвью и падает на ломающих изменениях (на pull request);
 - `mise run secrets` — Betterleaks сканирует Git-историю;
-- `mise run audit` — OSV-Scanner проверяет `pnpm-lock.yaml` по базе уязвимостей.
+- `mise run audit` — `pnpm audit` проверяет зависимости по базе уязвимостей; [временное точечное исключение для picomatch](docs/quality-gates.md#временное-исключение-ghsa-fc5q-39xc-vjpf).
 
 Workflow `.github/workflows/ci.yml` вызывает ту же `mise run check` через `jdx/mise-action`, дополнительно перегенерирует артефакты и падает, если `git diff` не пуст, проверяет сообщения коммитов (commitlint), секреты, ломающие изменения контракта и уязвимости. На push в любую другую ветку `.github/workflows/push-check.yml` запускает только `mise run check`. `.github/workflows/security.yml` повторяет сканирование уязвимостей и секретов по расписанию.
 
